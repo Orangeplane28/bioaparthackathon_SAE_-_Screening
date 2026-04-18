@@ -1,0 +1,26 @@
+[
+  {
+    "model": "esm2_t30_150M_UR50D",
+    "n_proteins": 1080,
+    "n_layers": 31,
+    "peak_auroc_layer": 29,
+    "peak_auroc": 0.9917575757575756,
+    "final_layer_auroc": 0.9743434343434345,
+    "peak_separation_ratio_layer": 29,
+    "peak_separation_ratio": 0.6521974628646915,
+    "min_cross_class_cka_layer": 0,
+    "min_cross_class_cka": 0.03996142789363852
+  },
+  {
+    "model": "esm2_t33_650M_UR50D",
+    "n_proteins": 1080,
+    "n_layers": 34,
+    "peak_auroc_layer": 32,
+    "peak_auroc": 0.9909494949494949,
+    "final_layer_auroc": 0.9773333333333334,
+    "peak_separation_ratio_layer": 33,
+    "peak_separation_ratio": 0.7803983107741824,
+    "min_cross_class_cka_layer": 8,
+    "min_cross_class_cka": 0.031400992846566673
+  }
+]

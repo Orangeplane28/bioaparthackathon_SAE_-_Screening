@@ -193,18 +193,14 @@ def targeted_site_intervention(proteins: dict,
 
         try:
             data = np.load(feat_path)
-            acts = data['activations']   # (seq_len, D_SAE)
+            acts = data['features']   # (seq_len, D_SAE)
         except Exception as e:
             print(f'  WARNING: Cannot load {pid}: {e}')
             continue
 
         seq_len  = acts.shape[0]
-        sites    = functional_sites.get(pid, {})
-        site_idx = []
-        for res_list in sites.values():
-            for r in res_list:
-                if 0 <= r < seq_len:
-                    site_idx.append(r)
+        sites    = functional_sites.get(pid, [])
+        site_idx = [r for r in sites if 0 <= r < seq_len]
 
         if not site_idx:
             continue
@@ -417,10 +413,7 @@ def main(top_k: int = 50, ablation_steps: list = None):
 
     # Load classifiers
     from config import BASELINES_DIR
-    clf_sae = load_classifier('sae_logreg', BASELINES_DIR)
-    if clf_sae is None:
-        # Try MLP fallback
-        clf_sae = load_classifier('sae_mlp', BASELINES_DIR)
+    clf_sae = load_classifier(BASELINES_DIR)
     if clf_sae is None:
         raise RuntimeError('No trained classifier found. Run N3 first.')
     print(f'  Loaded classifier: {type(clf_sae).__name__}')
@@ -551,8 +544,9 @@ def main(top_k: int = 50, ablation_steps: list = None):
         h = res.get('auroc_tox_vs_hard', None)
         g = res.get('auroc_tox_vs_gen',  None)
         if h is not None or g is not None:
-            print(f'  {cfg:<22s}: vs_hard={h if h else "N/A":.3f}, '
-                  f'vs_gen={g if g else "N/A":.3f}')
+            h_str = f'{h:.3f}' if h is not None else 'N/A'
+            g_str = f'{g:.3f}' if g is not None else 'N/A'
+            print(f'  {cfg:<22s}: vs_hard={h_str}, vs_gen={g_str}')
     if selectivity:
         print(f'  Selectivity ratio:      {selectivity.get("selectivity_ratio", "N/A")}')
     print()

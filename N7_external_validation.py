@@ -217,8 +217,8 @@ def build_external_feature_matrix(proteins: dict,
             continue
         try:
             data = np.load(feat_path)
-            acts = data['activations']
-            vec  = pool_features(acts, method='mean')
+            acts = data['features']
+            vec  = pool_features(acts, strategy='mean')
             X_list.append(vec)
             y_list.append(int(prot.get('label', 0)))
             pids_list.append(pid)
@@ -435,9 +435,7 @@ def main(device: str = 'cuda'):
         raise RuntimeError('No external SAE features found. Check steps 2–3.')
 
     # Load classifier
-    clf = load_classifier('sae_logreg', BASELINES_DIR)
-    if clf is None:
-        clf = load_classifier('sae_mlp', BASELINES_DIR)
+    clf = load_classifier(BASELINES_DIR)
     if clf is None:
         raise RuntimeError('No trained classifier. Run N3 first.')
     print(f'  Classifier: {type(clf).__name__}')

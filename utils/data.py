@@ -21,15 +21,20 @@ from config import (
 
 def load_features(pid: str, sae_dir: str = SAE_DIR) -> Optional[np.ndarray]:
     """
-    Load per-residue SAE feature matrix for a protein.
+    Load per-residue feature matrix for a protein.
+
+    Supports both .npz (SAE features) and .npy (raw embeddings) formats.
 
     Returns:
-        np.ndarray of shape (seq_len, D_SAE), or None if file not found.
+        np.ndarray of shape (seq_len, D), or None if file not found.
     """
-    path = os.path.join(sae_dir, f'{pid}.npz')
-    if not os.path.exists(path):
-        return None
-    return np.load(path)['features']
+    npz_path = os.path.join(sae_dir, f'{pid}.npz')
+    if os.path.exists(npz_path):
+        return np.load(npz_path)['features']
+    npy_path = os.path.join(sae_dir, f'{pid}.npy')
+    if os.path.exists(npy_path):
+        return np.load(npy_path)
+    return None
 
 
 def save_features(pid: str, features: np.ndarray, sae_dir: str = SAE_DIR):

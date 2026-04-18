@@ -212,24 +212,20 @@ def extract_convergent_features(proteins: dict, sae_dir: str,
 
         try:
             data = np.load(feat_path)
-            acts = data['activations']  # (seq_len, D_SAE)
+            acts = data['features']  # (seq_len, D_SAE)
         except Exception as e:
             print(f'  WARNING: Could not load features for {pid}: {e}')
             continue
 
         seq_len = acts.shape[0]
-        sites   = functional_sites.get(pid, {})
+        sites   = functional_sites.get(pid, [])
 
         if not sites:
             print(f'  No functional sites defined for {pid}')
             continue
 
         # Collect residue indices for each annotated site
-        site_indices = []
-        for site_name, res_list in sites.items():
-            for r in res_list:
-                if 0 <= r < seq_len:
-                    site_indices.append(r)
+        site_indices = [r for r in sites if 0 <= r < seq_len]
 
         if not site_indices:
             continue
@@ -248,7 +244,6 @@ def extract_convergent_features(proteins: dict, sae_dir: str,
             'functional_feature_ids': functional_feature_ids,
             'n_functional_features': len(functional_feature_ids),
             'site_mean_activations': site_acts[functional_feature_ids].tolist(),
-            'functional_sites_used': list(sites.keys()),
             'n_site_residues': len(site_indices),
         }
         print(f'  {pid}: {len(functional_feature_ids)} site-enriched features')

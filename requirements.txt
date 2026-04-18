@@ -1,0 +1,31 @@
+# AIxBio Hackathon — ESM3 SAE Toxin Classifier
+# Python >= 3.10
+
+# ── Core scientific stack ──────────────────────────────────────────────────────
+numpy>=1.24,<2.0
+scipy>=1.11
+scikit-learn>=1.3
+joblib>=1.3
+
+# ── Deep learning ─────────────────────────────────────────────────────────────
+torch>=2.1          # GPU strongly recommended for N3 (ESM3 + SAE training)
+
+# ── ESM3 (try the official package first; transformers is the fallback) ────────
+# Option A — official ESM package (recommended):
+#   pip install esm
+# Option B — HuggingFace (automatic fallback in utils/esm3.py):
+transformers>=4.40
+huggingface-hub>=0.22
+
+# ── Data / API ─────────────────────────────────────────────────────────────────
+requests>=2.31
+
+# ── Figures (optional but recommended) ────────────────────────────────────────
+matplotlib>=3.7
+
+# ── UMAP (used in N5 if matplotlib is available) ──────────────────────────────
+umap-learn>=0.5      # optional — gracefully skipped if missing
+
+# ── Notebook execution (optional) ─────────────────────────────────────────────
+jupyter>=1.0
+ipykernel>=6.0

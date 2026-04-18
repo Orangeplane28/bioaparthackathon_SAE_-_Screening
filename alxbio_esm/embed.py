@@ -21,21 +21,27 @@ ModelKey = Literal[
     "facebook/esm2_t36_3B_UR50D",
 ]
 
+Precision = Literal["fp32", "fp16", "bf16"]
+
 _DEFAULT_MODEL: ModelKey = "facebook/esm2_t33_650M_UR50D"
+
+_DTYPE_MAP: dict[str, torch.dtype] = {
+    "fp32": torch.float32,
+    "fp16": torch.float16,
+    "bf16": torch.bfloat16,
+}
 
 
 def load_model(
     model_name: str = _DEFAULT_MODEL,
     device: str = "cuda",
-    fp16: bool = True,
+    precision: Precision = "fp16",
 ) -> tuple[EsmModel, object, str]:
     """Load ESM2 model + tokenizer. Returns (model, tokenizer, device)."""
     print(f"[embed] Loading {model_name} …")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = EsmModel.from_pretrained(model_name, output_hidden_states=True)
-    if fp16 and "cuda" in device:
-        model = model.half()
-    model = model.to(device).eval()
+    model = model.to(_DTYPE_MAP[precision]).to(device).eval()
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
     print(f"[embed] Loaded {n_params:.0f}M params on {device}.")
     return model, tokenizer, device
@@ -75,7 +81,7 @@ def embed_dataset(
     out_dir: Path,
     model_name: str = _DEFAULT_MODEL,
     device: str = "cuda",
-    fp16: bool = True,
+    precision: Precision = "fp16",
     max_len: int = 500,
     skip_existing: bool = True,
 ) -> Path:
@@ -93,7 +99,7 @@ def embed_dataset(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    model, tokenizer, device = load_model(model_name, device, fp16)
+    model, tokenizer, device = load_model(model_name, device, precision)
     model_tag = model_name.split("/")[-1]
     model_dir = out_dir / model_tag
     model_dir.mkdir(exist_ok=True)

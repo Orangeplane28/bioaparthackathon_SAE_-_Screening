@@ -79,41 +79,39 @@ Pass any of these to `--model` in step 2:
 
 ## Using ESM3
 
-ESM3 uses EvolutionaryScale's own `esm` package, not Transformers. The rest of the pipeline (analysis, viz) is model-agnostic — only `alxbio_esm/embed.py` needs a new backend.
+ESM3 is fully supported via `alxbio_esm/embed_esm3.py`. The analysis pipeline (`03_analyze.py`) is model-agnostic — no changes needed there.
 
-**Install:**
+**One-time setup:**
 ```bash
-uv add esm  # EvolutionaryScale's package
+# 1. Accept the license at huggingface.co/EvolutionaryScale/esm3-sm-open-v1
+# 2. Log in (downloads ~2.9 GB weights on first run)
+hf auth login
+# or: export HF_TOKEN=hf_...
 ```
 
-**Get model access:** ESM3 weights are gated on HuggingFace (`esm3_sm_open_v1`). Request access at `huggingface.co/EvolutionaryScale/esm3-sm-open-v1`, then `huggingface-cli login`.
+The environment variable name is **`HF_TOKEN`**.
 
-**Drop-in replacement for `embed_sequence` in `alxbio_esm/embed.py`:**
+**Run:**
+```bash
+uv run python scripts/02_embed.py \
+  --data-dir data/raw_matched \
+  --out-dir data/embeddings_matched \
+  --model esm3_sm_open_v1 \
+  --precision bf16 \
+  --max-len 256
 
-```python
-from esm.models.esm3 import ESM3
-from esm.sdk.api import ESMProtein, GenerationConfig
-
-def load_esm3(device="cuda"):
-    model = ESM3.from_pretrained("esm3_sm_open_v1").to(device).eval()
-    return model
-
-@torch.no_grad()
-def embed_sequence_esm3(seq, model, device, max_len=500):
-    seq = seq[:max_len]
-    protein = ESMProtein(sequence=seq)
-    # encode_inputs returns a tensor of shape (1, L+2, d_model) per track
-    tensor = model.encode(protein)
-    # forward_and_sample with output_hidden_states returns all layer embeddings
-    out = model.forward(
-        sequence_tokens=tensor.sequence.unsqueeze(0).to(device),
-        output_hidden_states=True,
-    )
-    # out.hidden_states: tuple of (1, L+2, d) for each layer
-    return np.stack([h[0, 1:-1].float().mean(0).cpu().numpy()
-                     for h in out.hidden_states])  # (n_layers, d)
+uv run python scripts/03_analyze.py \
+  --emb-root data/embeddings_matched \
+  --results-dir results/matched \
+  --umap-layers 0 12 24 48
 ```
 
-Then call `embed_dataset(..., model_name="esm3_sm_open_v1")` — the rest of the pipeline is unchanged. The `model_tag` derived from the name will automatically separate ESM3 embeddings from ESM2 ones in the output directories.
+**Precision options** (same flag for both ESM2 and ESM3):
 
-> ESM3-small has 1.4B parameters across sequence, structure, and function tracks. Run with FP16 and `max_len=256` on a 6 GB card to stay within VRAM.
+| `--precision` | dtype | VRAM (ESM3-small) | Notes |
+|---|---|---|---|
+| `bf16` | bfloat16 | ~3 GB | default for ESM3, recommended |
+| `fp16` | float16 | ~3 GB | default for ESM2 |
+| `fp32` | float32 | ~6 GB | reference only, slow |
+
+> ESM3-small: 1.4B params, d_model=1536, 48 layers. Uses forward hooks internally (no `output_hidden_states` in its API) — this is handled transparently in `embed_esm3.py`.

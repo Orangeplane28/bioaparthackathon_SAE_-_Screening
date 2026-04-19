@@ -1,0 +1,350 @@
+{
+  "n_external_proteins": 17,
+  "overall_auroc": 0.7333,
+  "per_family_auroc": {
+    "beta_PFT": {
+      "n": 3,
+      "auroc": null,
+      "mean_prob": 0.6676,
+      "pids": [
+        "P09839",
+        "P0A0L2",
+        "P0A0L4"
+      ]
+    },
+    "alpha_PFT": {
+      "n": 2,
+      "auroc": null,
+      "mean_prob": 0.9327,
+      "pids": [
+        "P01498",
+        "P01501"
+      ]
+    },
+    "AMP": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.0095,
+      "pids": [
+        "P11006"
+      ]
+    },
+    "AB_toxin": {
+      "n": 2,
+      "auroc": null,
+      "mean_prob": 0.8334,
+      "pids": [
+        "P15917",
+        "P10844"
+      ]
+    },
+    "RIP": {
+      "n": 2,
+      "auroc": null,
+      "mean_prob": 0.9645,
+      "pids": [
+        "P02879",
+        "P20656"
+      ]
+    },
+    "conotoxin": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.9828,
+      "pids": [
+        "P0C1X2"
+      ]
+    },
+    "dendrotoxin": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.9628,
+      "pids": [
+        "P00974"
+      ]
+    },
+    "lipase_coact": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.9932,
+      "pids": [
+        "P02703"
+      ]
+    },
+    "annexin": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.0002,
+      "pids": [
+        "P07355"
+      ]
+    },
+    "apolipoprotein": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.6003,
+      "pids": [
+        "P02647"
+      ]
+    },
+    "defensin": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.0526,
+      "pids": [
+        "O15520"
+      ]
+    },
+    "silk": {
+      "n": 1,
+      "auroc": null,
+      "mean_prob": 0.9039,
+      "pids": [
+        "A0A0K8SXK3"
+      ]
+    }
+  },
+  "feature_overlap": {
+    "P09839": {
+      "frac_active_top_features": 0.0057,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.0371
+    },
+    "P0A0L2": {
+      "frac_active_top_features": 0.4368,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.8229
+    },
+    "P0A0L4": {
+      "frac_active_top_features": 0.454,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.9344
+    },
+    "P01498": {
+      "frac_active_top_features": 0.0862,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.5572
+    },
+    "P01501": {
+      "frac_active_top_features": 0.3908,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.5258
+    },
+    "P11006": {
+      "frac_active_top_features": 0.3218,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.0801
+    },
+    "P15917": {
+      "frac_active_top_features": 0.0057,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.0371
+    },
+    "P10844": {
+      "frac_active_top_features": 0.0,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.0
+    },
+    "P02879": {
+      "frac_active_top_features": 0.046,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.2972
+    },
+    "P20656": {
+      "frac_active_top_features": 0.408,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.6372
+    },
+    "P0C1X2": {
+      "frac_active_top_features": 0.0632,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.4086
+    },
+    "P00974": {
+      "frac_active_top_features": 0.1667,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 1.0772
+    },
+    "P02703": {
+      "frac_active_top_features": 0.5057,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 3.2687
+    },
+    "P07355": {
+      "frac_active_top_features": 0.0172,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 0.1114
+    },
+    "P02647": {
+      "frac_active_top_features": 0.4713,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 3.0458
+    },
+    "O15520": {
+      "frac_active_top_features": 0.2414,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 1.56
+    },
+    "A0A0K8SXK3": {
+      "frac_active_top_features": 0.3161,
+      "train_toxin_mean": 0.1547,
+      "relative_to_train": 2.0429
+    }
+  },
+  "convergent_ext": {
+    "P09839": {
+      "family": "beta_PFT",
+      "n_active": 1,
+      "frac_active": 0.0057
+    },
+    "P0A0L2": {
+      "family": "beta_PFT",
+      "n_active": 76,
+      "frac_active": 0.4368
+    },
+    "P0A0L4": {
+      "family": "beta_PFT",
+      "n_active": 79,
+      "frac_active": 0.454
+    },
+    "P01498": {
+      "family": "alpha_PFT",
+      "n_active": 15,
+      "frac_active": 0.0862
+    },
+    "P01501": {
+      "family": "alpha_PFT",
+      "n_active": 68,
+      "frac_active": 0.3908
+    }
+  },
+  "ablation_generalisation": {
+    "auroc_full": 0.7333,
+    "auroc_ablated_top": 0.7667,
+    "auroc_ablated_random": 0.7333,
+    "drop_vs_top": -0.0333,
+    "drop_vs_random": 0.0,
+    "generalisation_gap": -0.0333
+  },
+  "external_proteins": {
+    "P09839": {
+      "id": "P09839",
+      "name": "Aerolysin",
+      "family": "beta_PFT",
+      "label": 1,
+      "length": 141
+    },
+    "P0A0L2": {
+      "id": "P0A0L2",
+      "name": "Leukotoxin LukS-PV",
+      "family": "beta_PFT",
+      "label": 1,
+      "length": 257
+    },
+    "P0A0L4": {
+      "id": "P0A0L4",
+      "name": "Leukotoxin LukF-PV",
+      "family": "beta_PFT",
+      "label": 1,
+      "length": 266
+    },
+    "P01498": {
+      "id": "P01498",
+      "name": "Delta-toxin",
+      "family": "alpha_PFT",
+      "label": 1,
+      "length": 35
+    },
+    "P01501": {
+      "id": "P01501",
+      "name": "Melittin",
+      "family": "alpha_PFT",
+      "label": 1,
+      "length": 70
+    },
+    "P11006": {
+      "id": "P11006",
+      "name": "Magainin-2",
+      "family": "AMP",
+      "label": 1,
+      "length": 303
+    },
+    "P15917": {
+      "id": "P15917",
+      "name": "Anthrax lethal factor",
+      "family": "AB_toxin",
+      "label": 1,
+      "length": 809
+    },
+    "P10844": {
+      "id": "P10844",
+      "name": "BoNT/A light chain",
+      "family": "AB_toxin",
+      "label": 1,
+      "length": 1291
+    },
+    "P02879": {
+      "id": "P02879",
+      "name": "Ricin toxin A chain",
+      "family": "RIP",
+      "label": 1,
+      "length": 576
+    },
+    "P20656": {
+      "id": "P20656",
+      "name": "Saporin-S6",
+      "family": "RIP",
+      "label": 1,
+      "length": 299
+    },
+    "P0C1X2": {
+      "id": "P0C1X2",
+      "name": "Alpha-conotoxin ImI",
+      "family": "conotoxin",
+      "label": 1,
+      "length": 86
+    },
+    "P00974": {
+      "id": "P00974",
+      "name": "Dendrotoxin I",
+      "family": "dendrotoxin",
+      "label": 1,
+      "length": 100
+    },
+    "P02703": {
+      "id": "P02703",
+      "name": "Colipase",
+      "family": "lipase_coact",
+      "label": 0,
+      "length": 112
+    },
+    "P07355": {
+      "id": "P07355",
+      "name": "Annexin A2",
+      "family": "annexin",
+      "label": 0,
+      "length": 339
+    },
+    "P02647": {
+      "id": "P02647",
+      "name": "Apolipoprotein A-I",
+      "family": "apolipoprotein",
+      "label": 0,
+      "length": 267
+    },
+    "O15520": {
+      "id": "O15520",
+      "name": "Defensin beta-2 (hBD2)",
+      "family": "defensin",
+      "label": 0,
+      "length": 208
+    },
+    "A0A0K8SXK3": {
+      "id": "A0A0K8SXK3",
+      "name": "Spider silk MaSp1",
+      "family": "silk",
+      "label": 0,
+      "length": 261
+    }
+  }
+}

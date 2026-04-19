@@ -104,22 +104,46 @@ def load_feature_ranking(feat_rank_dir: str) -> Dict:
     return {'top_feature_ids': list(range(200))}
 
 
-def load_classifier(baselines_dir: str = BASELINES_DIR):
-    """Load trained SAE classifier (joblib pickle). Returns None if not found."""
+def load_classifier(name: str = None, baselines_dir: str = BASELINES_DIR):
+    """
+    Load a trained sklearn classifier from a joblib pickle.
+
+    Args:
+        name:          Stem of the pickle file without extension
+                       (e.g. 'sae_logreg', 'sae_mlp').  If None, tries
+                       the default priority list.
+        baselines_dir: Directory that contains the .pkl files.
+
+    Returns:
+        Fitted Pipeline object, or None if no file is found.
+    """
     import joblib
-    for fname in ['sae_logreg.pkl', 'sae_mlp.pkl', 'raw_logreg.pkl']:
+
+    # If a specific name was requested, try it first
+    if name is not None:
+        fname = name if name.endswith('.pkl') else f'{name}.pkl'
+        path  = os.path.join(baselines_dir, fname)
+        if os.path.exists(path):
+            clf = joblib.load(path)
+            print(f'  Classifier loaded: {fname}')
+            return clf
+        print(f'  WARNING: Requested classifier {fname!r} not found in {baselines_dir}')
+
+    # Fallback: scan default priority list
+    for fname in ['sae_logreg.pkl', 'sae_mlp.pkl', 'esm3_raw_logreg.pkl', 'raw_logreg.pkl']:
         path = os.path.join(baselines_dir, fname)
         if os.path.exists(path):
             clf = joblib.load(path)
-            print(f'Classifier loaded: {fname}')
+            print(f'  Classifier loaded (fallback): {fname}')
             return clf
-    print('WARNING: No saved classifier found. Run N3 first.')
+
+    print('  WARNING: No saved classifier found. Run N3 first.')
     return None
 
 
 def build_feature_matrix(pid_list: List[str], proteins: Dict,
                          sae_dir: str = SAE_DIR,
-                         pooling: str = 'mean') -> Tuple[np.ndarray, np.ndarray, List[str]]:
+                         pooling: str = 'topk') -> Tuple[np.ndarray, np.ndarray, List[str]]:
     """
     Build (X, y, valid_pids) feature matrix for a list of protein IDs.
 

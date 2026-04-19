@@ -30,7 +30,7 @@ from config import (
     D_MODEL, D_SAE, K_TOPK, ESM3_LAYER,
     SAE_WEIGHTS, make_dirs
 )
-from utils.esm3 import load_esm3, embed_esm3, load_sae
+from utils.esm3 import load_esm3, load_sae, get_block
 from utils.data import (
     load_master_dataset, load_splits, load_feature_ranking,
     save_features, load_features, load_classifier
@@ -120,6 +120,48 @@ def load_external_proteins(cache_path: str) -> dict:
     return proteins
 
 
+# ── Local embedding helper (autocast + BF16→FP32, mirrors N3) ────────────────
+
+def _embed_sequence(model, tokenizer, sequence: str,
+                    layer: int, device: str,
+                    use_transformers_api: bool) -> np.ndarray:
+    """Hook-based ESM3 embedding with autocast to avoid Float/BFloat16 matmul errors."""
+    if use_transformers_api:
+        inputs = tokenizer(sequence, return_tensors='pt', add_special_tokens=True)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = model(**inputs, output_hidden_states=True)
+        return outputs.hidden_states[layer + 1][0, 1:-1, :].float().cpu().numpy()
+
+    encoded    = tokenizer(sequence, return_tensors='pt', add_special_tokens=True)
+    tok_tensor = encoded['input_ids'].to(device)
+    captured   = {}
+
+    def hook_fn(module, inp, out):
+        val = out[0] if isinstance(out, tuple) else out
+        captured['hidden'] = val.detach().float()   # BFloat16 → Float32
+
+    block = get_block(model, layer)
+    hook  = block.register_forward_hook(hook_fn)
+    try:
+        device_type = 'cuda' if device != 'cpu' else 'cpu'
+        with torch.no_grad(), torch.amp.autocast(device_type=device_type,
+                                                  dtype=torch.bfloat16):
+            model(sequence_tokens=tok_tensor)
+    finally:
+        hook.remove()
+
+    if 'hidden' not in captured:
+        raise RuntimeError(f'Hook did not fire at layer {layer}')
+    return captured['hidden'][0, 1:-1, :].cpu().numpy()
+
+
+def _is_oom(e: Exception) -> bool:
+    msg = str(e).lower()
+    return (isinstance(e, torch.cuda.OutOfMemoryError) or
+            'out of memory' in msg or 'cudaerrormemoryal' in msg.replace(' ', ''))
+
+
 # ── Embed external proteins ───────────────────────────────────────────────────
 
 def embed_external_proteins(model, tokenizer, proteins: dict,
@@ -128,7 +170,7 @@ def embed_external_proteins(model, tokenizer, proteins: dict,
                               device: str) -> list:
     """
     Extract ESM3 layer-36 embeddings for external proteins.
-    Uses the same checkpointing logic as N3.
+    Uses autocast to prevent Float/BFloat16 dtype errors.
     """
     os.makedirs(ext_emb_dir, exist_ok=True)
     errors = []
@@ -142,21 +184,30 @@ def embed_external_proteins(model, tokenizer, proteins: dict,
         if not seq:
             continue
 
-        try:
-            emb = embed_esm3(model, tokenizer, seq, layer=ESM3_LAYER,
-                             device=device, use_transformers_api=use_transformers_api)
-            np.save(out_path, emb.astype(np.float32))
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
+        embedded = False
+        for max_len, label in [(len(seq), 'full'), (512, '512aa'), (256, '256aa')]:
             try:
-                emb = embed_esm3(model, tokenizer, seq[:512], layer=ESM3_LAYER,
-                                 device=device, use_transformers_api=use_transformers_api)
+                emb = _embed_sequence(model, tokenizer, seq[:max_len],
+                                      ESM3_LAYER, device, use_transformers_api)
                 np.save(out_path, emb.astype(np.float32))
-                print(f'  {pid}: truncated to 512 aa (OOM)')
-            except Exception as e2:
-                errors.append((pid, str(e2)))
-        except Exception as e:
-            errors.append((pid, str(e)))
+                if label != 'full':
+                    print(f'  {pid}: truncated to {label} (OOM)')
+                embedded = True
+                break
+            except Exception as e:
+                if _is_oom(e):
+                    try:
+                        torch.cuda.synchronize()
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    continue
+                errors.append((pid, str(e)))
+                embedded = True
+                break
+
+        if not embedded:
+            errors.append((pid, 'OOM even at 256aa'))
 
     print(f'  External embeddings extracted. Errors: {len(errors)}')
     return errors
@@ -217,8 +268,8 @@ def build_external_feature_matrix(proteins: dict,
             continue
         try:
             data = np.load(feat_path)
-            acts = data['activations']
-            vec  = pool_features(acts, method='mean')
+            acts = data['features']   # key written by save_features()
+            vec  = pool_features(acts, strategy='topk')
             X_list.append(vec)
             y_list.append(int(prot.get('label', 0)))
             pids_list.append(pid)
@@ -412,6 +463,7 @@ def main(device: str = 'cuda'):
     # 2. Embed external proteins with ESM3
     print('\n[2/7] Loading ESM3 and extracting external embeddings...')
     model, tokenizer, use_transformers_api = load_esm3(device=device)
+    # No manual dtype cast — autocast inside _embed_sequence handles BF16/FP32
     embed_external_proteins(model, tokenizer, ext_proteins, ext_emb_dir,
                             use_transformers_api, device)
     del model

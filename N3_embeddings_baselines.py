@@ -26,7 +26,7 @@ from config import (
     BASELINES_DIR, SAE_WEIGHTS, D_MODEL, D_SAE, K_TOPK, ESM3_LAYER,
     SAE_N_EPOCHS, SAE_BATCH, SAE_LR, SAE_AUX_LAMBDA, make_dirs
 )
-from utils.esm3 import TopKSAE, load_esm3, embed_esm3
+from utils.esm3 import TopKSAE, load_esm3, get_block
 from utils.data import (
     load_master_dataset, load_splits, load_features, save_features, pool_features,
     build_feature_matrix, load_classifier
@@ -34,12 +34,84 @@ from utils.data import (
 from utils.stats import evaluate_classifier
 
 
+def _is_oom(e: Exception) -> bool:
+    """Return True for any CUDA out-of-memory error regardless of exception type."""
+    msg = str(e).lower()
+    return (
+        isinstance(e, torch.cuda.OutOfMemoryError) or
+        'out of memory' in msg or
+        'cudaerrormemoryal' in msg.replace(' ', '')
+    )
+
+
+def _reset_cuda(device: str):
+    """Attempt to recover CUDA after OOM — prevents state corruption cascade."""
+    if device == 'cpu':
+        return
+    try:
+        torch.cuda.synchronize()
+    except Exception:
+        pass
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+def _embed_sequence(model, tokenizer, sequence: str,
+                    layer: int, device: str,
+                    use_transformers_api: bool) -> np.ndarray:
+    """
+    Extract layer-{layer} residue embeddings from ESM3.
+
+    Uses torch.amp.autocast to ensure the entire forward pass runs in a
+    consistent BFloat16 dtype — this prevents the mixed Float/BFloat16
+    matmul error that occurs when ESM3 internally mixes dtypes.
+    The hook then casts the captured activation to Float32 for numpy/SAE.
+
+    Returns np.ndarray of shape (seq_len, d_model), dtype float32.
+    """
+    if use_transformers_api:
+        inputs = tokenizer(sequence, return_tensors='pt', add_special_tokens=True)
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        with torch.no_grad():
+            outputs = model(**inputs, output_hidden_states=True)
+        return outputs.hidden_states[layer + 1][0, 1:-1, :].float().cpu().numpy()
+
+    # Official esm package — hook-based extraction with autocast
+    encoded    = tokenizer(sequence, return_tensors='pt', add_special_tokens=True)
+    tok_tensor = encoded['input_ids'].to(device)
+
+    captured = {}
+
+    def hook_fn(module, inp, out):
+        val = out[0] if isinstance(out, tuple) else out
+        captured['hidden'] = val.detach().float()   # BFloat16 → Float32
+
+    block = get_block(model, layer)
+    hook  = block.register_forward_hook(hook_fn)
+    try:
+        # autocast forces all eligible ops to BFloat16, resolving mixed-dtype
+        # errors that arise from ESM3 creating float32 intermediates internally
+        device_type = 'cuda' if device != 'cpu' else 'cpu'
+        with torch.no_grad(), torch.amp.autocast(device_type=device_type,
+                                                  dtype=torch.bfloat16):
+            model(sequence_tokens=tok_tensor)
+    finally:
+        hook.remove()
+
+    if 'hidden' not in captured:
+        raise RuntimeError(f'Hook did not fire at layer {layer}')
+
+    return captured['hidden'][0, 1:-1, :].cpu().numpy()
+
+
 def embed_all_proteins(model, tokenizer, proteins: dict, emb_dir: str,
                         use_transformers_api: bool, device: str,
                         layer: int = ESM3_LAYER):
     """Extract ESM3 embeddings for all proteins with checkpointing."""
     os.makedirs(emb_dir, exist_ok=True)
-    errors = []
+    errors  = []
     n_total = len(proteins)
 
     for i, (pid, prot) in enumerate(proteins.items()):
@@ -51,57 +123,93 @@ def embed_all_proteins(model, tokenizer, proteins: dict, emb_dir: str,
         if not seq:
             continue
 
-        try:
-            emb = embed_esm3(model, tokenizer, seq, layer=layer,
-                             device=device, use_transformers_api=use_transformers_api)
-            np.save(out_path, emb.astype(np.float32))
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
+        # Try full length → 512 aa → 256 aa before giving up
+        embedded = False
+        for max_len, label in [(len(seq), 'full'), (512, '512aa'), (256, '256aa')]:
+            s = seq[:max_len]
             try:
-                emb = embed_esm3(model, tokenizer, seq[:512], layer=layer,
-                                 device=device, use_transformers_api=use_transformers_api)
+                emb = _embed_sequence(model, tokenizer, s, layer, device, use_transformers_api)
                 np.save(out_path, emb.astype(np.float32))
-                print(f'  {pid}: truncated to 512 aa (OOM)')
-            except Exception as e2:
-                errors.append((pid, str(e2)))
-        except Exception as e:
-            errors.append((pid, str(e)))
+                if label != 'full':
+                    print(f'  {pid}: truncated to {label} (OOM)')
+                embedded = True
+                break
+            except Exception as e:
+                if _is_oom(e):
+                    _reset_cuda(device)   # clear state before retry
+                    continue              # try shorter sequence
+                else:
+                    errors.append((pid, str(e)))
+                    if len(errors) == 1:
+                        print(f'  First error ({pid}): {e}')
+                    embedded = True       # stop retrying — non-OOM error
+                    break
+
+        if not embedded:
+            errors.append((pid, 'OOM even at 256aa'))
 
         if (i + 1) % 50 == 0:
             print(f'  Embeddings: {i+1}/{n_total} processed')
 
     print(f'  Embedding extraction complete. Errors: {len(errors)}')
+    if errors:
+        print(f'  Sample errors: {errors[:3]}')
     return errors
 
 
 def train_sae(emb_dir: str, train_pids: list, sae_weights_dir: str,
+              proteins: dict = None,
               n_epochs: int = SAE_N_EPOCHS, batch_size: int = SAE_BATCH,
               lr: float = SAE_LR, aux_lambda: float = SAE_AUX_LAMBDA,
               device: str = 'cpu') -> TopKSAE:
-    """Train TopK SAE on training set embeddings."""
+    """
+    Train TopK SAE on training set embeddings.
+
+    Normalisation is computed from toxin-only tokens so the SAE learns to
+    represent the space relative to toxic protein residues.  This prevents
+    the pooled cross-class mean from washing out the class-specific signal
+    before the SAE encoder sees it.  The SAE is still trained on ALL tokens
+    (toxins + negatives) so it learns a universal dictionary.
+    """
     os.makedirs(sae_weights_dir, exist_ok=True)
+
+    # Separate toxin vs negative PIDs for normalisation stats
+    if proteins is not None:
+        toxin_train_pids = [p for p in train_pids
+                            if proteins.get(p, {}).get('label') == 1]
+    else:
+        toxin_train_pids = train_pids  # fallback: treat all as toxins
+    if len(toxin_train_pids) == 0:
+        toxin_train_pids = train_pids
 
     # Load all training embeddings into memory
     print('  Loading training embeddings...')
-    all_embs = []
+    all_embs, toxin_embs = [], []
     for pid in train_pids:
         path = os.path.join(emb_dir, f'{pid}.npy')
         if os.path.exists(path):
             emb = np.load(path)        # (seq_len, D_MODEL)
             all_embs.append(emb)
+            if pid in toxin_train_pids:
+                toxin_embs.append(emb)
 
     if not all_embs:
         raise RuntimeError('No training embeddings found. Run embedding extraction first.')
 
-    # Compute normalization stats
-    concat = np.concatenate(all_embs, axis=0)   # (N_tokens, D_MODEL)
-    emb_mean = concat.mean(axis=0).astype(np.float32)
-    emb_std  = concat.std(axis=0).astype(np.float32) + 1e-8
+    # Compute normalisation stats from TOXIN tokens only
+    # This centres the space on "what a toxin residue looks like" so the SAE
+    # preserves class-discriminative variance rather than averaging it away.
+    tox_concat = np.concatenate(toxin_embs, axis=0) if toxin_embs else np.concatenate(all_embs, axis=0)
+    emb_mean   = tox_concat.mean(axis=0).astype(np.float32)
+    emb_std    = tox_concat.std(axis=0).astype(np.float32) + 1e-8
     np.save(os.path.join(sae_weights_dir, 'emb_mean.npy'), emb_mean)
     np.save(os.path.join(sae_weights_dir, 'emb_std.npy'),  emb_std)
-    print(f'  Training tokens: {len(concat):,}')
 
-    # Normalize
+    concat = np.concatenate(all_embs, axis=0)   # (N_tokens, D_MODEL) — all classes
+    print(f'  Training tokens: {len(concat):,}  '
+          f'(normalisation from {len(tox_concat):,} toxin tokens)')
+
+    # Normalize all tokens using toxin-derived stats
     concat_norm = (concat - emb_mean) / emb_std
 
     # Build tensor dataset
@@ -250,6 +358,8 @@ def main(device: str = 'cuda', n_epochs: int = SAE_N_EPOCHS):
     # 1. Load ESM3
     print('[1/4] Loading ESM3...')
     model, tokenizer, use_transformers_api = load_esm3(device=device)
+    # No manual dtype cast — torch.amp.autocast inside _embed_sequence
+    # forces consistent BFloat16 arithmetic during the forward pass.
 
     # 2. Embed all proteins
     print('\n[2/4] Extracting ESM3 embeddings (checkpointed)...')
@@ -264,6 +374,7 @@ def main(device: str = 'cuda', n_epochs: int = SAE_N_EPOCHS):
     # 3. Train SAE
     print('\n[3/4] Training TopK SAE...')
     sae = train_sae(EMB_DIR, splits['train'], SAE_WEIGHTS,
+                    proteins=proteins,
                     n_epochs=n_epochs, device=device)
 
     # Load normalization stats

@@ -37,9 +37,18 @@ ESM3_LAYER = 36      # Layer index (75% depth: 36/48)
 CONVERGENT_IDS = ['P09616', 'P61914', 'P77335']
 
 FUNCTIONAL_SITES = {
-    'P09616': list(range(14, 34)) + list(range(106, 128)),  # Alpha-hemolysin
-    'P61914': list(range(18, 36)) + [111, 114, 134],        # FraC
-    'P77335': list(range(0, 15))  + list(range(55, 80)),    # ClyA
+    'P09616': {                                   # Alpha-hemolysin (S. aureus)
+        'amphipathic_helix': list(range(14, 34)),
+        'stem_loop':         list(range(106, 128)),
+    },
+    'P61914': {                                   # Fragaceatoxin C (FraC)
+        'amphipathic_helix': list(range(18, 36)),
+        'key_residues':      [111, 114, 134],
+    },
+    'P77335': {                                   # Cytolysin A (ClyA)
+        'n_terminal_helix':  list(range(0, 15)),
+        'hydrophobic_loop':  list(range(55, 80)),
+    },
 }
 
 PROTEIN_NAMES = {

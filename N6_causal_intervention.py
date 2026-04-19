@@ -193,7 +193,7 @@ def targeted_site_intervention(proteins: dict,
 
         try:
             data = np.load(feat_path)
-            acts = data['activations']   # (seq_len, D_SAE)
+            acts = data['features']   # (seq_len, D_SAE)  — key written by save_features()
         except Exception as e:
             print(f'  WARNING: Cannot load {pid}: {e}')
             continue

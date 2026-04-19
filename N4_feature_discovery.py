@@ -141,6 +141,111 @@ def compute_feature_stats(toxin_vecs: np.ndarray,
     }
 
 
+# ── Amino-acid composition baseline ──────────────────────────────────────────
+
+def composition_baseline_auroc(proteins: dict, toxin_pids: list,
+                                all_neg_pids: list) -> float:
+    """
+    Compute a composition-based AUROC using only raw amino acid frequencies.
+    This is the bias floor: any SAE feature whose AUROC is ≤ this value is
+    likely encoding composition rather than mechanism.
+
+    Features considered: 20 AA frequencies + sequence length (21-dim vector).
+
+    Returns:
+        auroc_composition: float — the AUROC of a LogReg trained on aa freqs.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.pipeline import Pipeline
+
+    AA = 'ACDEFGHIKLMNPQRSTVWY'
+
+    def aa_vec(seq: str) -> np.ndarray:
+        seq = seq.upper()
+        n = max(len(seq), 1)
+        freq = np.array([seq.count(a) / n for a in AA], dtype=np.float32)
+        return np.append(freq, len(seq))  # +1 for length
+
+    pids  = toxin_pids + all_neg_pids
+    X_aa  = np.stack([aa_vec(proteins[p]['sequence']) for p in pids
+                      if p in proteins and proteins[p].get('sequence')])
+    y_aa  = np.array([1] * len(toxin_pids) + [0] * len(all_neg_pids),
+                     dtype=int)[:len(X_aa)]
+
+    if len(np.unique(y_aa)) < 2 or len(X_aa) < 10:
+        return 0.5
+
+    pipe = Pipeline([('sc', StandardScaler()),
+                     ('lr', LogisticRegression(max_iter=500, C=0.1,
+                                               class_weight='balanced',
+                                               random_state=42))])
+    pipe.fit(X_aa, y_aa)
+
+    from sklearn.metrics import roc_auc_score
+    probs = pipe.predict_proba(X_aa)[:, 1]
+    try:
+        return float(roc_auc_score(y_aa, probs))
+    except Exception:
+        return 0.5
+
+
+# ── Composition correlation filter ────────────────────────────────────────────
+
+def flag_composition_correlated(X_tox: np.ndarray, X_neg: np.ndarray,
+                                  proteins: dict,
+                                  toxin_pids: list, neg_pids: list,
+                                  composition_auroc_floor: float,
+                                  tolerance: float = 0.03) -> np.ndarray:
+    """
+    For each SAE feature, estimate how much of its AUROC can be explained
+    by amino acid composition alone, using Pearson correlation between the
+    feature activation and each of the 21 composition covariates.
+
+    A feature is flagged as 'composition-correlated' if its max absolute
+    Pearson r with any composition covariate exceeds 0.6.  These features
+    are not removed but are marked so downstream analysis can scrutinise them.
+
+    Returns:
+        is_composition_correlated: bool array of shape (D_SAE,)
+    """
+    AA = 'ACDEFGHIKLMNPQRSTVWY'
+
+    def aa_vec(seq: str) -> np.ndarray:
+        seq = seq.upper()
+        n = max(len(seq), 1)
+        freq = np.array([seq.count(a) / n for a in AA], dtype=np.float32)
+        return np.append(freq, len(seq))
+
+    all_pids = toxin_pids + neg_pids
+    seqs_present = [p for p in all_pids
+                    if p in proteins and proteins[p].get('sequence')]
+    if not seqs_present:
+        return np.zeros(X_tox.shape[1], dtype=bool)
+
+    comp_mat = np.stack([aa_vec(proteins[p]['sequence']) for p in seqs_present])
+    # comp_mat: (n_proteins, 21)
+
+    X_all = np.concatenate([X_tox, X_neg], axis=0)[:len(seqs_present)]
+
+    # Vectorised Pearson r: correlate each feature against each covariate
+    X_c   = X_all - X_all.mean(axis=0, keepdims=True)
+    C_c   = comp_mat - comp_mat.mean(axis=0, keepdims=True)
+    X_std = X_c.std(axis=0) + 1e-8
+    C_std = C_c.std(axis=0) + 1e-8
+
+    # (D_SAE, 21) correlation matrix via einsum
+    n = X_c.shape[0]
+    corr = (X_c.T @ C_c) / (n * np.outer(X_std, C_std))   # (D_SAE, 21)
+    max_abs_corr = np.abs(corr).max(axis=1)                 # (D_SAE,)
+
+    is_comp_corr = max_abs_corr > 0.6
+    n_flagged = int(is_comp_corr.sum())
+    print(f'  Composition-correlated features (|r|>0.6): {n_flagged} '
+          f'/ {X_tox.shape[1]}  (flagged, not removed)')
+    return is_comp_corr
+
+
 # ── Composite score & ranking ─────────────────────────────────────────────────
 
 def rank_features(stats: dict, alpha: float = 0.05) -> dict:
@@ -148,37 +253,44 @@ def rank_features(stats: dict, alpha: float = 0.05) -> dict:
     Apply BH FDR correction and build composite ranking.
 
     Composite score = 0.5 * AUROC_vs_all + 0.25 * AUROC_vs_hard + 0.25 * AUROC_vs_gen
-    (weights emphasise overall discrimination while penalising hard-neg leakage)
+                    - 0.5 * is_composition_correlated  (penalty)
 
     A feature is 'significant' if:
       - q-value ≤ alpha, AND
       - AUROC_vs_all ≥ 0.60, AND
-      - mean_tox > mean_neg
+      - mean_tox > mean_neg, AND
+      - NOT flagged as composition-correlated  (is_composition_correlated == False)
 
     Returns extended stats dict with q_values, is_significant, composite_score,
     sorted_indices.
     """
     q_values, is_sig_bh = bh_correction(stats['pval_vs_all'], alpha=alpha)
 
-    auroc_sig  = stats['auroc_vs_all'] >= 0.60
-    mean_check = stats['mean_tox'] > stats['mean_neg']
-    is_significant = is_sig_bh & auroc_sig & mean_check
+    auroc_sig    = stats['auroc_vs_all'] >= 0.60
+    mean_check   = stats['mean_tox'] > stats['mean_neg']
+    not_comp_corr = ~stats.get('is_composition_correlated',
+                                np.zeros(len(stats['auroc_vs_all']), dtype=bool))
+    is_significant = is_sig_bh & auroc_sig & mean_check & not_comp_corr
 
+    # Penalise composition-correlated features in composite score
+    comp_penalty = stats.get('is_composition_correlated',
+                              np.zeros(len(stats['auroc_vs_all']), dtype=bool)).astype(float)
     composite = (
         0.50 * stats['auroc_vs_all'] +
         0.25 * stats['auroc_vs_hard'] +
         0.25 * stats['auroc_vs_gen']
+        - 0.50 * comp_penalty
     )
 
     sorted_indices = np.argsort(-composite)   # descending
 
-    stats['q_values']       = q_values
-    stats['is_significant'] = is_significant
+    stats['q_values']        = q_values
+    stats['is_significant']  = is_significant
     stats['composite_score'] = composite
-    stats['sorted_indices'] = sorted_indices
+    stats['sorted_indices']  = sorted_indices
 
     n_sig = int(is_significant.sum())
-    print(f'  Significant features (BH q≤{alpha}, AUROC≥0.60, mean↑): {n_sig}')
+    print(f'  Significant features (BH q≤{alpha}, AUROC≥0.60, mean↑, not comp-corr): {n_sig}')
     return stats
 
 
@@ -212,7 +324,7 @@ def extract_convergent_features(proteins: dict, sae_dir: str,
 
         try:
             data = np.load(feat_path)
-            acts = data['activations']  # (seq_len, D_SAE)
+            acts = data['features']  # (seq_len, D_SAE)  — key written by save_features()
         except Exception as e:
             print(f'  WARNING: Could not load features for {pid}: {e}')
             continue
@@ -375,13 +487,28 @@ def main(top_k: int = 200, batch_size: int = 512, alpha: float = 0.05):
     print(f'  Feature matrix shapes: tox={X_tox.shape}, neg={X_neg.shape}')
     print(f'  D_SAE = {X_tox.shape[1]}')
 
+    # 1b. Composition baseline — measure the bias floor before touching SAE features
+    print('\n[1b/5] Computing amino-acid composition baseline AUROC...')
+    comp_auroc = composition_baseline_auroc(proteins, toxin_pids, all_neg_pids)
+    print(f'  Composition baseline AUROC: {comp_auroc:.3f}  '
+          f'(features must exceed this to be mechanistically informative)')
+
     # 2. Compute per-feature statistics
     print('\n[2/5] Computing per-feature statistics (batched)...')
     feat_stats = compute_feature_stats(
         X_tox, X_hard, X_gen, X_neg, batch_size=batch_size
     )
 
-    # 3. BH correction + ranking
+    # 2b. Flag composition-correlated features
+    print('  Flagging composition-correlated features...')
+    is_comp_corr = flag_composition_correlated(
+        X_tox, X_neg, proteins, toxin_pids, all_neg_pids,
+        composition_auroc_floor=comp_auroc
+    )
+    feat_stats['is_composition_correlated'] = is_comp_corr
+    feat_stats['composition_baseline_auroc'] = comp_auroc
+
+    # 3. BH correction + ranking (composition-correlated features are penalised)
     print('\n[3/5] Applying BH FDR correction and ranking...')
     feat_stats = rank_features(feat_stats, alpha=alpha)
     sorted_idx = feat_stats['sorted_indices']
@@ -430,18 +557,20 @@ def main(top_k: int = 200, batch_size: int = 512, alpha: float = 0.05):
         'top_k':                   top_k,
         'alpha_fdr':               alpha,
         'n_significant':           int(feat_stats['is_significant'].sum()),
+        'composition_baseline_auroc': float(feat_stats.get('composition_baseline_auroc', 0.5)),
         'per_feature': {
-            'auroc_vs_all':    feat_stats['auroc_vs_all'].tolist(),
-            'auroc_vs_hard':   feat_stats['auroc_vs_hard'].tolist(),
-            'auroc_vs_gen':    feat_stats['auroc_vs_gen'].tolist(),
-            'q_values':        feat_stats['q_values'].tolist(),
-            'cohen_d':         feat_stats['cohen_d'].tolist(),
-            'mean_tox':        feat_stats['mean_tox'].tolist(),
-            'mean_neg':        feat_stats['mean_neg'].tolist(),
-            'freq_tox':        feat_stats['freq_tox'].tolist(),
-            'freq_neg':        feat_stats['freq_neg'].tolist(),
-            'composite_score': feat_stats['composite_score'].tolist(),
-            'is_significant':  feat_stats['is_significant'].tolist(),
+            'auroc_vs_all':             feat_stats['auroc_vs_all'].tolist(),
+            'auroc_vs_hard':            feat_stats['auroc_vs_hard'].tolist(),
+            'auroc_vs_gen':             feat_stats['auroc_vs_gen'].tolist(),
+            'q_values':                 feat_stats['q_values'].tolist(),
+            'cohen_d':                  feat_stats['cohen_d'].tolist(),
+            'mean_tox':                 feat_stats['mean_tox'].tolist(),
+            'mean_neg':                 feat_stats['mean_neg'].tolist(),
+            'freq_tox':                 feat_stats['freq_tox'].tolist(),
+            'freq_neg':                 feat_stats['freq_neg'].tolist(),
+            'composite_score':          feat_stats['composite_score'].tolist(),
+            'is_significant':           feat_stats['is_significant'].tolist(),
+            'is_composition_correlated': feat_stats['is_composition_correlated'].tolist(),
         },
         'convergent_site_features': {
             pid: res for pid, res in convergent_results.items()

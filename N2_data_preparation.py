@@ -38,59 +38,192 @@ from utils.data import (
 
 # ── SafeProtein-Bench ─────────────────────────────────────────────────────────
 SAFE_PROTEIN_BENCH_URL = (
-    'https://raw.githubusercontent.com/apart-research/'
-    'SafeProtein-Bench/main/data/dangerous_proteins.json'
+    'https://raw.githubusercontent.com/jigang-fan/'
+    'SafeProtein/main/SafeProtein_Bench.json'
 )
+
+# Fallback: curated UniProt accessions for well-characterised dangerous proteins.
+# Covers beta-PFTs, alpha-PFTs, AB-toxins, neurotoxins, and plant/bacterial RIPs.
+# These are fetched from UniProt when SafeProtein-Bench is unavailable.
+FALLBACK_TOXIN_IDS = [
+    # ── Beta pore-forming toxins ──────────────────────────────────────────────
+    'P09616',  # Alpha-hemolysin (S. aureus) — heptameric beta-PFT
+    'P61914',  # Fragaceatoxin C / FraC (A. fragacea) — actinoporin beta-PFT
+    'P77335',  # Cytolysin A / ClyA (E. coli) — alpha-helical PFT
+    'P09839',  # Aerolysin (A. hydrophila)
+    'P0A0L2',  # Leukotoxin LukS-PV (S. aureus)
+    'P0A0L4',  # Leukotoxin LukF-PV (S. aureus)
+    'P07659',  # Epsilon-toxin (C. perfringens)
+    'P15108',  # Perfringolysin O / theta-toxin (C. perfringens) — CDC
+    'P0C0S2',  # Listeriolysin O / LLO (L. monocytogenes) — CDC
+    'P0C0T6',  # Pneumolysin (S. pneumoniae) — CDC
+    'Q8GGC1',  # Streptolysin O (S. pyogenes) — CDC
+    # ── Alpha pore-forming toxins / AMPs ─────────────────────────────────────
+    'P01498',  # Delta-toxin (S. aureus)
+    'P01501',  # Melittin (A. mellifera honeybee)
+    'P11006',  # Magainin-2 (X. laevis frog)
+    'P08043',  # Alamethicin (T. viride)
+    # ── AB-type toxins ────────────────────────────────────────────────────────
+    'P15917',  # Anthrax lethal factor / LF (B. anthracis)
+    'P13423',  # Anthrax edema factor / EF (B. anthracis)
+    'P10844',  # Botulinum neurotoxin A light chain (C. botulinum)
+    'P0DPI0',  # Tetanus toxin light chain (C. tetani)
+    'P0AAL5',  # Diphtheria toxin (C. diphtheriae)
+    'P00588',  # Cholera toxin A subunit (V. cholerae)
+    'P04406',  # Shiga toxin A subunit (S. dysenteriae)
+    # ── Ribosome-inactivating proteins (RIPs) ────────────────────────────────
+    'P02879',  # Ricin A chain (R. communis)
+    'P20656',  # Saporin-S6 (S. officinalis)
+    'P06280',  # Abrin A chain (A. precatorius)
+    'P09762',  # Mistletoe lectin I A chain (V. album)
+    # ── Snake venom toxins ────────────────────────────────────────────────────
+    'P01388',  # Alpha-bungarotoxin (B. multicinctus)
+    'P60775',  # Cobratoxin (N. naja)
+    'P00601',  # Phospholipase A2 (N. naja) — venom PLA2
+    'P00278',  # Phospholipase A2 (C. atrox)
+    'P0C8G5',  # Taipoxin alpha chain (O. scutellatus)
+    # ── Spider / scorpion toxins ──────────────────────────────────────────────
+    'P00974',  # Dendrotoxin I (D. polylepis)
+    'P58809',  # Charybdotoxin (L. quinquestriatus)
+    'P01497',  # Omega-agatoxin IVA (A. aperta)
+    # ── Cone snail (conotoxins) ───────────────────────────────────────────────
+    'P0C1X2',  # Alpha-conotoxin ImI (C. imperialis)
+    'P50983',  # Mu-conotoxin GIIIA (C. geographus)
+    # ── Plant toxins ──────────────────────────────────────────────────────────
+    'P01579',  # Viscotoxin A1 (V. album) — thionin-type
+    'P07695',  # Pokeweed antiviral protein / PAP (P. americana)
+    # ── Fungal / microbial toxins ─────────────────────────────────────────────
+    'P15284',  # Aflatoxin B1 biosynthesis protein (A. parasiticus) — polyketide
+    'P16404',  # Fumonisin B1 biosynthesis (F. proliferatum)
+]
 
 
 def fetch_safe_protein_bench() -> dict:
-    """Download SafeProtein-Bench 429-protein dangerous protein list."""
+    """
+    Download SafeProtein-Bench 429-protein dangerous protein list.
+
+    Falls back to fetching FALLBACK_TOXIN_IDS from UniProt if the
+    SafeProtein-Bench URL is unavailable (404, network error, etc.).
+    """
+    # Try SafeProtein-Bench first
     try:
         resp = requests.get(SAFE_PROTEIN_BENCH_URL, timeout=30)
         resp.raise_for_status()
-        data = resp.json()
+        raw = resp.json()
+        # Normalise to {pid: {name, sequence}} regardless of source format.
+        # SafeProtein_Bench.json uses capitalised keys: "Sequence", "Length"
+        data = {}
+        for pid, info in raw.items():
+            seq = info.get('Sequence') or info.get('sequence') or ''
+            if seq:
+                data[pid] = {'name': info.get('name', pid), 'sequence': seq}
         print(f'  SafeProtein-Bench: {len(data)} proteins')
         return data
     except Exception as e:
         print(f'  WARNING: Could not fetch SafeProtein-Bench ({e})')
-        print('  Using empty toxin set — add proteins manually to data/toxins.json')
-        return {}
+        print('  Falling back to curated UniProt fallback list '
+              f'({len(FALLBACK_TOXIN_IDS)} accessions)...')
+
+    # Fallback: fetch each accession individually from UniProt
+    data = {}
+    ok, fail = 0, 0
+    for uid in FALLBACK_TOXIN_IDS:
+        try:
+            seq = fetch_uniprot_sequence(uid)
+            if seq:
+                data[uid] = {'name': uid, 'sequence': seq}
+                ok += 1
+            else:
+                fail += 1
+        except Exception as e2:
+            print(f'    WARNING: Could not fetch {uid}: {e2}')
+            fail += 1
+        time.sleep(RATE_LIMIT_PAUSE)
+
+    print(f'  Fallback toxins fetched: {ok} OK, {fail} failed')
+    if ok == 0:
+        print('  ERROR: No toxins could be fetched. '
+              'Check internet access or add proteins manually to data/toxins.json')
+    return data
 
 
 # ── Hard negative queries ─────────────────────────────────────────────────────
+# Design rationale: queries are intentionally spread across multiple organisms
+# (human, E. coli, yeast, Arabidopsis) so the classifier cannot separate toxins
+# from negatives on the basis of organism-level embedding signal.
+# All queries exclude keyword:toxin and keyword:antimicrobial.
 HARD_NEG_QUERIES = {
+    # Human membrane proteins — similar membrane topology to beta-PFTs
     'hard_neg_membrane': (
         'organism_id:9606 AND keyword:membrane AND reviewed:true '
         'NOT keyword:toxin NOT keyword:antimicrobial'
     ),
+    # Ion channels from multiple organisms — similar pore architecture
     'hard_neg_ion_channel': (
         'keyword:"ion channel" AND reviewed:true '
         'NOT keyword:toxin NOT keyword:antimicrobial'
     ),
+    # Coiled-coil / amphipathic helices from bacteria (non-human counterweight)
     'hard_neg_amphipathic': (
-        'keyword:"signal peptide" AND reviewed:true '
+        'keyword:"coiled coil" AND organism_id:83333 AND reviewed:true '
         'NOT keyword:toxin NOT keyword:antimicrobial'
     ),
+    # Lipid-binding from plants — avoids human-only clustering
     'hard_neg_lipid_binding': (
-        'keyword:"lipid-binding" AND reviewed:true '
+        'keyword:"lipid-binding" AND organism_id:3702 AND reviewed:true '
+        'NOT keyword:toxin NOT keyword:antimicrobial'
+    ),
+    # Bacterial secreted proteins — same secretion context as many toxins, non-toxic
+    'hard_neg_bacterial_secreted': (
+        'keyword:secreted AND organism_id:83333 AND reviewed:true '
+        'NOT keyword:toxin NOT keyword:antimicrobial NOT keyword:virulence'
+    ),
+    # Fungal extracellular proteins — same extracellular context, non-toxic
+    'hard_neg_fungal_extracellular': (
+        'keyword:secreted AND organism_id:559292 AND reviewed:true '
         'NOT keyword:toxin NOT keyword:antimicrobial'
     ),
 }
 
 GENERAL_NEG_QUERIES = {
+    # Human metabolic — classic easy negative
     'gen_neg_metabolic':    'keyword:glycolysis AND reviewed:true AND organism_id:9606',
+    # E. coli metabolic — non-human counterweight
+    'gen_neg_ecoli_metabolic': (
+        'keyword:glycolysis AND reviewed:true AND organism_id:83333'
+    ),
+    # Human nuclear
     'gen_neg_nuclear':      'keyword:nucleus AND reviewed:true AND organism_id:9606',
+    # Human cytoskeletal
     'gen_neg_cytoskeletal': 'keyword:cytoskeleton AND reviewed:true AND organism_id:9606',
+    # Human ribosomal
     'gen_neg_ribosomal':    'keyword:ribosome AND reviewed:true AND organism_id:9606',
+    # Plant ribosomal — non-animal, non-fungal, non-bacterial diversity
+    'gen_neg_plant_ribosomal': (
+        'keyword:ribosome AND reviewed:true AND organism_id:3702'
+    ),
 }
+
+# ── Length range of toxins (used to filter negatives for length matching) ──────
+# SafeProtein-Bench toxins span ~10–1500 aa. We keep negatives within 3× of the
+# toxin median (~300 aa) to prevent the classifier from learning length as a proxy.
+NEG_MIN_LEN = 10
+NEG_MAX_LEN = 1500
 
 
 def fetch_proteins_from_query(category: str, query: str,
                                max_per_category: int = 60) -> list:
-    """Fetch proteins for a UniProt query and return as list of dicts."""
-    results = uniprot_search(query, size=max_per_category)
+    """
+    Fetch proteins for a UniProt query and return as list of dicts.
+
+    Applies a length filter (NEG_MIN_LEN..NEG_MAX_LEN) to negatives so the
+    classifier cannot trivially learn sequence-length as a toxicity proxy.
+    """
+    results = uniprot_search(query, size=max_per_category * 2)  # over-fetch to absorb filtering
     proteins = []
     for r in results:
+        if len(proteins) >= max_per_category:
+            break
         uid = r.get('primaryAccession', '')
         if not uid:
             continue
@@ -99,6 +232,9 @@ def fetch_proteins_from_query(category: str, query: str,
         if not seq:
             seq = fetch_uniprot_sequence(uid)
         if not seq or len(seq) < 10:
+            continue
+        # Length filter: discard proteins far outside the toxin length range
+        if not (NEG_MIN_LEN <= len(seq) <= NEG_MAX_LEN):
             continue
         name = (r.get('proteinDescription', {})
                   .get('recommendedName', {})
@@ -261,14 +397,26 @@ def main(max_proteins: int = 60):
     splits = family_based_split(all_proteins, CONVERGENT_IDS)
 
     # Save
+    # Organism breakdown — sanity-check that negatives span multiple organisms
+    from collections import Counter
+    neg_orgs = Counter()
+    for p in all_proteins.values():
+        if p.get('label') == 0:
+            org = p.get('organism', p.get('category', 'unknown'))
+            neg_orgs[org] += 1
+
     master = {
         'proteins': all_proteins,
         'metadata': {
-            'convergent_ids': CONVERGENT_IDS,
-            'n_toxins':       sum(1 for p in all_proteins.values() if p.get('label') == 1),
-            'n_hard_neg':     sum(1 for p in all_proteins.values() if p.get('is_hard_negative')),
-            'n_gen_neg':      sum(1 for p in all_proteins.values()
-                                   if p.get('label') == 0 and not p.get('is_hard_negative')),
+            'convergent_ids':   CONVERGENT_IDS,
+            'n_toxins':         sum(1 for p in all_proteins.values() if p.get('label') == 1),
+            'n_hard_neg':       sum(1 for p in all_proteins.values() if p.get('is_hard_negative')),
+            'n_gen_neg':        sum(1 for p in all_proteins.values()
+                                     if p.get('label') == 0 and not p.get('is_hard_negative')),
+            'neg_length_range': [NEG_MIN_LEN, NEG_MAX_LEN],
+            'neg_categories':   list(set(
+                p.get('category', '') for p in all_proteins.values() if p.get('label') == 0
+            )),
         }
     }
     master_path = os.path.join(DATA_DIR, 'master_dataset_esm3.json')

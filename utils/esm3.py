@@ -80,14 +80,13 @@ def load_esm3(device: str = 'cuda'):
     Raises:
         RuntimeError if neither path succeeds.
     """
-    # Path 1: official esm package
+    # Path 1: official esm package (v3.x API — underscores, EsmSequenceTokenizer)
     try:
         from esm.models.esm3 import ESM3
-        from esm.tokenization import get_model_tokenizers
-        model = ESM3.from_pretrained('esm3-sm-open-v1').to(device).eval()
-        tokenizers = get_model_tokenizers('esm3-sm-open-v1')
-        tokenizer = tokenizers.sequence
-        print('ESM3 loaded via official esm package')
+        from esm.tokenization.sequence_tokenizer import EsmSequenceTokenizer
+        tokenizer = EsmSequenceTokenizer()
+        model = ESM3.from_pretrained('esm3_sm_open_v1').to(device).eval()
+        print('  ESM3 loaded via official esm package')
         return model, tokenizer, False
     except Exception as e1:
         print(f'  Official esm package unavailable: {e1}')
@@ -175,28 +174,34 @@ def embed_esm3(model, tokenizer, sequence: str, layer: int = 36,
         with torch.no_grad():
             outputs = model(**inputs, output_hidden_states=True)
         # hidden_states[0] = embedding layer, [layer+1] = transformer layer
-        return outputs.hidden_states[layer + 1][0, 1:-1, :].cpu().numpy()
+        return outputs.hidden_states[layer + 1][0, 1:-1, :].float().cpu().numpy()
 
-    # Hook-based extraction for official ESM package
+    # Hook-based extraction for official ESM package (v3.x)
+    # Use the transformers-style tokenizer call — works for EsmSequenceTokenizer
+    encoded = tokenizer(sequence, return_tensors='pt', add_special_tokens=True)
+    tok_tensor = encoded['input_ids'].to(device)
+
     captured = {}
 
     def hook_fn(module, inp, out):
         val = out[0] if isinstance(out, tuple) else out
-        captured['hidden'] = val.detach()
+        captured['hidden'] = val.detach().float()
 
     block = get_block(model, layer)
     hook = block.register_forward_hook(hook_fn)
     try:
-        tokens = tokenizer.encode(sequence, add_special_tokens=True)
-        tok_tensor = torch.tensor([tokens], device=device)
         with torch.no_grad():
-            try:
-                model(sequence_tokens=tok_tensor)
-            except TypeError:
-                model(tok_tensor)
+            model(sequence_tokens=tok_tensor)
     finally:
         hook.remove()
 
+    if 'hidden' not in captured:
+        raise RuntimeError(
+            f'Hook did not capture hidden state at layer {layer}. '
+            'Inspect model.named_modules() to verify block structure.'
+        )
+
+    # Remove BOS and EOS special tokens → shape (seq_len, d_model)
     return captured['hidden'][0, 1:-1, :].cpu().numpy()
 
 

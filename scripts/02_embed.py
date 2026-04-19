@@ -41,7 +41,8 @@ def main() -> None:
         default=None,
         help="Truncate sequences to this length. Defaults: 500 for ESM2, 256 for ESM3.",
     )
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default="auto",
+                        help="Device: 'auto' detects cuda → mps → cpu, or specify explicitly.")
     parser.add_argument(
         "--precision",
         default=None,

@@ -2,13 +2,84 @@
 
 Layer-by-layer analysis of whether ESM2 encodes toxicity in its representations — without fine-tuning. Three tests per model: linear probe AUROC, centroid separation ratio, and CKA. Outputs per-layer metrics and UMAP figures.
 
+---
+
+## Quickstart (first-time users)
+
+### 1. Prerequisites
+
+| Requirement | Install |
+|---|---|
+| Python 3.11+ | [python.org](https://www.python.org/downloads/) or `brew install python` on Mac |
+| [uv](https://docs.astral.sh/uv/) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Git | pre-installed on Mac/Linux; `brew install git` otherwise |
+
+On **Mac with Apple Silicon (M1/M2/M3/M4)**, no extra steps are needed — the pipeline auto-detects MPS and adjusts precision automatically.
+
+On **Linux with an NVIDIA GPU**, CUDA is auto-detected and used.
+
+On a **CPU-only machine**, everything still runs — just slower. Stick to the smaller ESM2 models (`t6` or `t12`).
+
+### 2. Clone and install
+
+```bash
+git clone https://github.com/nevrohelios/alxbio-esm.git
+cd alxbio-esm
+uv sync
+```
+
+That installs all dependencies into an isolated `.venv`. No manual `pip install` needed.
+
+### 3. Run the full pipeline
+
+```bash
+# Download organism-matched bacterial dataset (cleaner baseline)
+uv run python scripts/01b_organism_matched.py
+
+# Embed with ESM2-650M (auto-detects your device)
+uv run python scripts/02_embed.py \
+  --data-dir data/raw_matched \
+  --out-dir data/embeddings_matched \
+  --model facebook/esm2_t33_650M_UR50D
+
+# Analyse and produce figures
+uv run python scripts/03_analyze.py \
+  --emb-root data/embeddings_matched \
+  --results-dir results/matched \
+  --umap-layers 0 8 16 33
+```
+
+Results land in `results/matched/figures/`.
+
+---
+
+## Device support
+
+The `--device` flag defaults to `auto`, which picks the best available backend:
+
+```
+cuda  →  mps (Apple Silicon)  →  cpu
+```
+
+You can override it explicitly: `--device cuda`, `--device mps`, `--device cpu`.
+
+**Precision auto-adjustment:**
+
+| Device | bf16 | fp16 | fp32 |
+|---|---|---|---|
+| CUDA | supported | supported | supported |
+| MPS (Apple Silicon) | auto-downgraded to fp16 | supported | supported |
+| CPU | auto-downgraded to fp32 | auto-downgraded to fp32 | supported |
+
+No manual flags needed — the script prints a note when it downgrades.
+
+---
+
 ## Setup
 
 ```bash
 uv sync
 ```
-
-Device agnostic
 
 ---
 
@@ -108,15 +179,27 @@ Outputs per model:
 
 ## Available models
 
-Pass any of these to `--model` in step 2:
+Pass any of these to `--model` in step 2.
 
-| Model | Layers | d_model | VRAM (FP16) |
-|---|---|---|---|
-| `facebook/esm2_t6_8M_UR50D` | 6 | 320 | <1 GB |
-| `facebook/esm2_t12_35M_UR50D` | 12 | 480 | <1 GB |
-| `facebook/esm2_t30_150M_UR50D` | 30 | 640 | ~0.3 GB |
-| `facebook/esm2_t33_650M_UR50D` | 33 | 1280 | ~2.5 GB |
-| `facebook/esm2_t36_3B_UR50D` | 36 | 2560 | ~12 GB |
+### ESM2 (no auth required)
+
+| Model | Layers | d_model | VRAM (fp16) | RAM (cpu) |
+|---|---|---|---|---|
+| `facebook/esm2_t6_8M_UR50D` | 6 | 320 | <1 GB | ~0.1 GB |
+| `facebook/esm2_t12_35M_UR50D` | 12 | 480 | <1 GB | ~0.1 GB |
+| `facebook/esm2_t30_150M_UR50D` | 30 | 640 | ~0.3 GB | ~0.6 GB |
+| `facebook/esm2_t33_650M_UR50D` | 33 | 1280 | ~2.5 GB | ~2.5 GB |
+| `facebook/esm2_t36_3B_UR50D` | 36 | 2560 | ~12 GB | ~12 GB |
+
+> **Mac tip:** The 650M model fits comfortably in 8 GB unified memory. The 3B model needs 16 GB+.
+
+### ESM3 (HuggingFace login required — see [Using ESM3](#using-esm3))
+
+| Model | Layers | d_model | VRAM (fp16) | RAM (cpu) | Weights |
+|---|---|---|---|---|---|
+| `esm3_sm_open_v1` | 48 | 1536 | ~3 GB | ~6 GB | ~2.9 GB download |
+
+> ESM3 uses a multi-track architecture (sequence + structure + function tokens). Only the sequence track is used here; structure/function inputs are left empty.
 
 ---
 
@@ -140,7 +223,6 @@ uv run python scripts/02_embed.py \
   --data-dir data/raw_matched \
   --out-dir data/embeddings_matched \
   --model esm3_sm_open_v1 \
-  --precision bf16 \
   --max-len 256
 
 uv run python scripts/03_analyze.py \
@@ -149,11 +231,13 @@ uv run python scripts/03_analyze.py \
   --umap-layers 0 12 24 48
 ```
 
+> On Mac (MPS), `bf16` is automatically downgraded to `fp16` — no flag needed.
+
 **Precision options** (same flag for both ESM2 and ESM3):
 
 | `--precision` | dtype | VRAM (ESM3-small) | Notes |
 |---|---|---|---|
-| `bf16` | bfloat16 | ~3 GB | default for ESM3, recommended |
+| `bf16` | bfloat16 | ~3 GB | default for ESM3; auto-downgraded to fp16 on MPS |
 | `fp16` | float16 | ~3 GB | default for ESM2 |
 | `fp32` | float32 | ~6 GB | reference only, slow |
 

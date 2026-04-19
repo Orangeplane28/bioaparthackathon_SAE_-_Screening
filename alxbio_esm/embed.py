@@ -13,6 +13,8 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, EsmModel
 
+from alxbio_esm.device_utils import clear_cache, coerce_precision, get_device
+
 ModelKey = Literal[
     "facebook/esm2_t6_8M_UR50D",
     "facebook/esm2_t12_35M_UR50D",
@@ -34,10 +36,12 @@ _DTYPE_MAP: dict[str, torch.dtype] = {
 
 def load_model(
     model_name: str = _DEFAULT_MODEL,
-    device: str = "cuda",
+    device: str = "auto",
     precision: Precision = "fp16",
 ) -> tuple[EsmModel, object, str]:
     """Load ESM2 model + tokenizer. Returns (model, tokenizer, device)."""
+    device = get_device(device)
+    precision = coerce_precision(precision, device)
     print(f"[embed] Loading {model_name} …")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = EsmModel.from_pretrained(model_name, output_hidden_states=True)
@@ -80,7 +84,7 @@ def embed_dataset(
     labels: list[int],
     out_dir: Path,
     model_name: str = _DEFAULT_MODEL,
-    device: str = "cuda",
+    device: str = "auto",
     precision: Precision = "fp16",
     max_len: int = 500,
     skip_existing: bool = True,
@@ -114,7 +118,7 @@ def embed_dataset(
         except RuntimeError as exc:
             # OOM or tokenisation error — skip and warn
             print(f"[embed] WARN: skipping {pid}: {exc}")
-            torch.cuda.empty_cache()
+            clear_cache(device)
 
     print(f"[embed] Embeddings saved to {model_dir}")
     return model_dir

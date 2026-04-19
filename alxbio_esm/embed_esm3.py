@@ -29,6 +29,8 @@ import torch
 from dotenv import load_dotenv
 from tqdm import tqdm
 
+from alxbio_esm.device_utils import clear_cache, coerce_precision, get_device
+
 # Load .env from the project root (or any parent) so HF_TOKEN is available
 # before huggingface_hub tries to authenticate. Safe no-op if .env is absent.
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
@@ -50,7 +52,7 @@ _DEFAULT_MODEL = "esm3_sm_open_v1"  # 1.4B params, d_model=1536, 48 layers
 
 def load_esm3(
     model_name: str = _DEFAULT_MODEL,
-    device: str = "cuda",
+    device: str = "auto",
     precision: Precision = "bf16",
 ) -> object:
     """
@@ -75,6 +77,8 @@ def load_esm3(
     except ImportError as exc:
         raise ImportError("Run: uv add esm") from exc
 
+    device = get_device(device)
+    precision = coerce_precision(precision, device)
     dtype = _DTYPE_MAP[precision]
     print(f"[esm3] Loading {model_name} in {precision} on {device} …")
 
@@ -169,7 +173,7 @@ def embed_dataset(
     labels: list[int],
     out_dir: Path,
     model_name: str = _DEFAULT_MODEL,
-    device: str = "cuda",
+    device: str = "auto",
     precision: Precision = "bf16",
     max_len: int = 256,
     skip_existing: bool = True,
@@ -202,7 +206,7 @@ def embed_dataset(
                 np.savez_compressed(out_path, layers=layers, label=np.int8(label))
             except RuntimeError as exc:
                 print(f"[esm3] WARN: skipping {pid}: {exc}")
-                torch.cuda.empty_cache()
+                clear_cache(device)
     finally:
         collector.remove()
 

@@ -1,0 +1,14 @@
+[
+  {
+    "model": "esm2_t33_650M_UR50D",
+    "n_proteins": 2391,
+    "n_layers": 34,
+    "peak_auroc_layer": 15,
+    "peak_auroc": 0.9236662243271578,
+    "final_layer_auroc": 0.8936111081610788,
+    "peak_separation_ratio_layer": 0,
+    "peak_separation_ratio": 0.19377609344418623,
+    "min_cross_class_cka_layer": 10,
+    "min_cross_class_cka": 0.03269347750600275
+  }
+]

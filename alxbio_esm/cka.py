@@ -12,12 +12,6 @@ import numpy as np
 from tqdm import tqdm
 
 
-def _gram(X: np.ndarray) -> np.ndarray:
-    """Centered linear Gram matrix for (N, d) array."""
-    X = X - X.mean(0)
-    return X @ X.T  # (N, N)
-
-
 def linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
     """
     Linear CKA between representation matrices X and Y.
@@ -30,12 +24,26 @@ def linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
     -------
     float in [0, 1] — 1 means identical representations (up to linear transform)
     """
-    K = _gram(X)
-    L = _gram(Y)
-    hsic_xy = float((K * L).sum())
-    hsic_xx = float(np.linalg.norm(K, "fro"))
-    hsic_yy = float(np.linalg.norm(L, "fro"))
-    return hsic_xy / (hsic_xx * hsic_yy + 1e-12)
+    X = np.asarray(X, dtype=np.float64)
+    Y = np.asarray(Y, dtype=np.float64)
+
+    # L2-normalize each sample to unit norm (removes scale drift across layers)
+    X = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+    Y = Y / (np.linalg.norm(Y, axis=1, keepdims=True) + 1e-12)
+
+    # Center columns
+    X = X - X.mean(axis=0)
+    Y = Y - Y.mean(axis=0)
+
+    # CKA = ||X^T Y||_F^2 / (||X^T X||_F * ||Y^T Y||_F)
+    # This avoids forming N×N Gram matrices when d < N
+    XtY = X.T @ Y
+    XtX = X.T @ X
+    YtY = Y.T @ Y
+
+    numerator = float((XtY * XtY).sum())
+    denom = float(np.sqrt((XtX * XtX).sum() * (YtY * YtY).sum()))
+    return numerator / (denom + 1e-12)
 
 
 def consecutive_layer_cka(X: np.ndarray) -> np.ndarray:
@@ -66,7 +74,7 @@ def cross_class_cka(
     """
     CKA between toxic and benign subspaces at each layer.
 
-    Subsamples to *max_samples* per class so the (N×N) Gram matrices stay small.
+    Subsamples to *max_samples* per class so the Gram matrices stay small.
 
     Parameters
     ----------

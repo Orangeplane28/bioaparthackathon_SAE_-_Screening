@@ -87,7 +87,7 @@ def load_esm3(
 
     n_params = sum(p.numel() for p in model.parameters()) / 1e9
     n_layers = len(model.transformer.blocks)
-    d_model = model.transformer.blocks[0].ffn[0].weight.shape[1]
+    d_model = model.transformer.blocks[0].ffn[0].weight.shape[0]
     print(f"[esm3] {n_params:.1f}B params | {n_layers} layers | d_model={d_model} | {precision}")
     return model
 
@@ -151,9 +151,18 @@ def embed_sequence(
     collector.reset()
 
     protein = ESMProtein(sequence=seq)
-    tokens = model.encode(protein)
+    try:
+        tokens = model.encode(protein)
+        seq_tokens = tokens.sequence
+    except (TypeError, AttributeError):
+        # Fallback: tokenize sequence directly
+        seq_tokens = model.tokenizers.sequence.encode(seq)
 
-    model.forward(sequence_tokens=tokens.sequence.unsqueeze(0))
+    if not isinstance(seq_tokens, torch.Tensor):
+        seq_tokens = torch.tensor(seq_tokens, dtype=torch.long)
+    seq_tokens = seq_tokens.to(device)
+
+    model.forward(sequence_tokens=seq_tokens.unsqueeze(0))
 
     raw = collector.collect()
     n_layers = len(raw)
@@ -193,6 +202,7 @@ def embed_dataset(
     model_dir = out_dir / model_name.replace("/", "_")
     model_dir.mkdir(parents=True, exist_ok=True)
 
+    device = get_device(device)
     model = load_esm3(model_name, device, precision)
     collector = _LayerCollector(model)
 

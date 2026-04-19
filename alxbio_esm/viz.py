@@ -70,6 +70,111 @@ def umap_grid(
     print(f"[viz] Saved UMAP → {out_path}")
 
 
+_GROUP_COLORS: dict[str, str] = {
+    "snakes": "#e67e22",
+    "scorpions": "#27ae60",
+    "spiders": "#8e44ad",
+    "bacteria": "#2980b9",
+}
+
+# When group is unknown (no groups.tsv), color by toxicity label instead
+_LABEL_COLORS: dict[int, str] = {1: "#e74c3c", 0: "#2980b9"}
+
+
+def umap_grid_grouped(
+    X: np.ndarray,
+    labels: np.ndarray,
+    groups: np.ndarray,
+    layers: list[int],
+    out_path: Path,
+    model_tag: str = "",
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    random_state: int = 42,
+) -> None:
+    """
+    UMAP grid: rows = organism groups, columns = layers.
+
+    Each cell shows only that group's sequences: red (toxic) / blue (benign).
+    Row label on the left, layer index on top.
+    Falls back to a single-row layout when all groups are "unknown".
+    """
+    try:
+        import umap
+    except ImportError as exc:
+        raise ImportError("umap-learn is required: uv add umap-learn") from exc
+
+    unique_groups = [g for g in sorted(set(groups)) if g != "unknown"]
+    if not unique_groups:
+        unique_groups = ["unknown"]
+
+    n_rows = len(unique_groups)
+    n_cols = len(layers)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3.5 * n_rows), squeeze=False)
+
+    # Pre-compute one UMAP embedding per layer across ALL sequences so that
+    # coordinates are comparable across rows within the same column.
+    embeddings: dict[int, np.ndarray] = {}
+    for layer in layers:
+        X_layer = X[:, layer, :].astype(np.float32)
+        reducer = umap.UMAP(
+            n_neighbors=n_neighbors,
+            min_dist=min_dist,
+            random_state=random_state,
+            verbose=False,
+        )
+        embeddings[layer] = reducer.fit_transform(X_layer)
+
+    for row_idx, grp in enumerate(unique_groups):
+        grp_mask = groups == grp
+        for col_idx, layer in enumerate(layers):
+            ax = axes[row_idx][col_idx]
+            emb = embeddings[layer]
+
+            for lbl, lbl_name, color in [
+                (1, "toxic", "#e74c3c"),
+                (0, "benign", "#2980b9"),
+            ]:
+                mask = grp_mask & (labels == lbl)
+                if mask.sum() == 0:
+                    continue
+                ax.scatter(
+                    emb[mask, 0], emb[mask, 1],
+                    c=color,
+                    s=12,
+                    alpha=0.7,
+                    label=lbl_name,
+                )
+
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+            if row_idx == 0:
+                ax.set_title(f"Layer {layer}", fontsize=11)
+            if col_idx == 0:
+                ax.set_ylabel(grp, fontsize=11, fontweight="bold")
+
+    # Figure-level legend: collect handles from all axes to ensure toxic+benign both appear
+    seen: dict[str, object] = {}
+    for row in axes:
+        for ax in row:
+            for h, l in zip(*ax.get_legend_handles_labels()):
+                seen.setdefault(l, h)
+    fig.legend(
+        seen.values(), seen.keys(),
+        loc="lower center", ncol=len(seen), markerscale=1.5, fontsize=9,
+        frameon=False, bbox_to_anchor=(0.5, -0.02),
+    )
+
+    title = f"UMAP — {model_tag}" if model_tag else "UMAP"
+    fig.suptitle(title, fontsize=13)
+    fig.tight_layout()
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[viz] Saved grouped UMAP → {out_path}")
+
+
 # ---------------------------------------------------------------------------
 # Layer-analysis summary plots
 # ---------------------------------------------------------------------------

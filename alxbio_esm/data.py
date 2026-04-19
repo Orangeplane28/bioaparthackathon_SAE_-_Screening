@@ -7,6 +7,7 @@ Bias mitigations applied:
   - Length-stratified sampling: benign sampled to match toxic length histogram
   - Organism distribution reported post-download for manual audit
   - Organism-matched pairing: benign queried per toxic taxon ID (see prepare_organism_matched_dataset)
+  - Eukaryotic clade-matched: benign from same venomous clade (see prepare_eukaryotic_dataset)
 """
 
 from __future__ import annotations
@@ -38,6 +39,14 @@ QUERIES = {
         f" NOT (keyword:{_KW_TOXIN})"
         f" NOT (keyword:{_KW_VIRULENCE})"
     ),
+}
+
+# Venomous eukaryotic clades: taxon_id → group label
+# Snakes (Serpentes), Scorpions (Scorpiones), Spiders (Araneae)
+EUKARYOTIC_GROUPS: dict[str, str] = {
+    "8570": "snakes",
+    "6843": "scorpions",
+    "6893": "spiders",
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -525,3 +534,150 @@ def prepare_organism_matched_dataset(
 
     report_organism_distribution(matched_toxic, matched_benign, top_n=10)
     return toxic_out, benign_out
+
+
+# ─────────────────────────────────────────────────────────────
+# Eukaryotic clade-matched dataset (snakes / scorpions / spiders)
+# ─────────────────────────────────────────────────────────────
+
+def prepare_eukaryotic_dataset(
+    out_dir: Path,
+    min_len: int = 50,
+    max_len: int = 1022,
+    bin_width: int = 50,
+    overwrite: bool = False,
+    sleep_between: float = 0.5,
+) -> tuple[Path, Path, Path]:
+    """
+    Download and prepare a clade-matched eukaryotic toxic/benign dataset.
+
+    For each venomous clade (snakes=8570, scorpions=6843, spiders=6893):
+      - All Swiss-Prot reviewed toxins (KW-0800) from that clade
+      - Benign proteins from the same clade, length-stratified to match toxic
+
+    Writes to out_dir:
+      toxic.fasta, benign.fasta — merged across groups
+      groups.tsv               — uniprot_id → group name for every sequence
+
+    Returns (toxic_path, benign_path, groups_path).
+    """
+    out_dir = Path(out_dir)
+    toxic_out = out_dir / "toxic.fasta"
+    benign_out = out_dir / "benign.fasta"
+    groups_out = out_dir / "groups.tsv"
+
+    if (
+        not overwrite
+        and toxic_out.exists() and toxic_out.stat().st_size > 0
+        and benign_out.exists() and benign_out.stat().st_size > 0
+        and groups_out.exists()
+    ):
+        print(f"[data] Eukaryotic dataset cached in {out_dir} — skipping.")
+        return toxic_out, benign_out, groups_out
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    all_toxic: list[tuple[str, str]] = []
+    all_benign: list[tuple[str, str]] = []
+    group_map: dict[str, str] = {}  # uniprot_id → group name
+
+    for taxon_id, group_name in EUKARYOTIC_GROUPS.items():
+        print(f"\n[data] Downloading {group_name} (taxonomy_id:{taxon_id})...")
+
+        toxic_query = (
+            f"(taxonomy_id:{taxon_id}) AND (keyword:{_KW_TOXIN}) AND (reviewed:true)"
+        )
+        benign_query = (
+            f"(taxonomy_id:{taxon_id}) AND (reviewed:true)"
+            f" NOT (keyword:{_KW_TOXIN})"
+            f" NOT (keyword:{_KW_VIRULENCE})"
+        )
+
+        # Download all toxins for this clade
+        toxic_raw: list[tuple[str, str]] = []
+        for page_text in _stream_fasta_pages(toxic_query, page_size=500, sleep_between=sleep_between):
+            toxic_raw.extend(parse_fasta(page_text))
+
+        # Download benign pool (3× toxic count as target)
+        benign_raw: list[tuple[str, str]] = []
+        benign_target = max(len(toxic_raw) * 3, 500)
+        for page_text in _stream_fasta_pages(
+            benign_query, page_size=500, max_records=benign_target, sleep_between=sleep_between
+        ):
+            benign_raw.extend(parse_fasta(page_text))
+            if len(benign_raw) >= benign_target:
+                break
+
+        # Length filter
+        toxic_filt = [(h, s) for h, s in toxic_raw if min_len <= len(s) <= max_len]
+        benign_filt = [(h, s) for h, s in benign_raw if min_len <= len(s) <= max_len]
+        print(
+            f"[data] {group_name}: {len(toxic_filt)} toxic, {len(benign_filt)} benign "
+            f"after length filter [{min_len}, {max_len}]."
+        )
+
+        if not toxic_filt:
+            print(f"[data] WARNING: No toxic sequences for {group_name} — skipping.")
+            continue
+
+        # Length-stratify benign to match toxic length distribution
+        if benign_filt:
+            benign_matched = length_stratify(toxic_filt, benign_filt, bin_width=bin_width)
+        else:
+            benign_matched = []
+            print(f"[data] WARNING: No benign sequences for {group_name}.")
+
+        # Record group membership
+        for h, _ in toxic_filt:
+            group_map[extract_uniprot_id(h)] = group_name
+        for h, _ in benign_matched:
+            group_map[extract_uniprot_id(h)] = group_name
+
+        all_toxic.extend(toxic_filt)
+        all_benign.extend(benign_matched)
+        print(f"[data] {group_name}: kept {len(toxic_filt)} toxic, {len(benign_matched)} benign.")
+
+    if not all_toxic:
+        raise RuntimeError("Eukaryotic download produced 0 sequences.")
+
+    write_fasta(all_toxic, toxic_out)
+    write_fasta(all_benign, benign_out)
+
+    with open(groups_out, "w") as f:
+        f.write("uniprot_id\tgroup\n")
+        for uid, grp in group_map.items():
+            f.write(f"{uid}\t{grp}\n")
+
+    print(f"\n[data] Eukaryotic dataset: {len(all_toxic)} toxic, {len(all_benign)} benign.")
+    report_organism_distribution(all_toxic, all_benign)
+    return toxic_out, benign_out, groups_out
+
+
+def load_dataset_with_groups(
+    data_dir: Path,
+    max_per_class: int = 5000,
+    min_len: int = 50,
+    max_len: int = 1022,
+) -> tuple[list[str], list[str], list[int], list[str]]:
+    """
+    Like load_dataset but also returns per-sequence group labels from groups.tsv.
+
+    Returns (ids, sequences, labels, groups).
+    Sequences without a groups.tsv entry get group "unknown".
+    """
+    ids, seqs, labels = load_dataset(
+        data_dir, max_per_class=max_per_class, min_len=min_len, max_len=max_len
+    )
+
+    group_map: dict[str, str] = {}
+    groups_path = Path(data_dir) / "groups.tsv"
+    if groups_path.exists():
+        with open(groups_path) as f:
+            next(f)  # skip header
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) == 2:
+                    group_map[parts[0]] = parts[1]
+
+    groups = [group_map.get(uid, "unknown") for uid in ids]
+    return ids, seqs, labels, groups

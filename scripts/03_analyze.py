@@ -21,6 +21,7 @@ from alxbio_esm.probing import linear_probe_auroc
 from alxbio_esm.viz import (
     plot_summary_panel,
     umap_grid,
+    umap_grid_grouped,
 )
 
 import warnings
@@ -28,7 +29,30 @@ import warnings
 warnings.filterwarnings("ignore")
 
 
-def run_for_model(emb_dir: Path, results_dir: Path, umap_layers: list[int]) -> dict:
+def _load_groups(data_dir: Path | None, ids: list[str]) -> np.ndarray | None:
+    """Return group array aligned to ids, or None if no groups.tsv found."""
+    if data_dir is None:
+        return None
+    groups_path = Path(data_dir) / "groups.tsv"
+    if not groups_path.exists():
+        return None
+    group_map: dict[str, str] = {}
+    with open(groups_path) as f:
+        next(f)
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) == 2:
+                group_map[parts[0]] = parts[1]
+    groups = np.array([group_map.get(uid, "unknown") for uid in ids])
+    return groups
+
+
+def run_for_model(
+    emb_dir: Path,
+    results_dir: Path,
+    umap_layers: list[int],
+    data_dir: Path | None = None,
+) -> dict:
     model_tag = emb_dir.name
     print(f"\n{'=' * 60}\nAnalysing: {model_tag}\n{'=' * 60}")
 
@@ -50,16 +74,25 @@ def run_for_model(emb_dir: Path, results_dir: Path, umap_layers: list[int]) -> d
 
     # ---- UMAP ----
     print("\n[UMAP] Generating UMAP grid …")
-    # clamp layer indices to valid range
-    valid_umap_layers = [min(l, n_layers - 1) for l in umap_layers]
-    valid_umap_layers = sorted(set(valid_umap_layers))
-    umap_grid(
-        X,
-        labels,
-        valid_umap_layers,
-        out_path=results_dir / "figures" / f"umap_{model_tag}.png",
-        model_tag=model_tag,
-    )
+    valid_umap_layers = sorted(set(min(l, n_layers - 1) for l in umap_layers))
+    groups = _load_groups(data_dir, ids)
+    if groups is not None:
+        umap_grid_grouped(
+            X,
+            labels,
+            groups,
+            valid_umap_layers,
+            out_path=results_dir / "figures" / f"umap_{model_tag}.png",
+            model_tag=model_tag,
+        )
+    else:
+        umap_grid(
+            X,
+            labels,
+            valid_umap_layers,
+            out_path=results_dir / "figures" / f"umap_{model_tag}.png",
+            model_tag=model_tag,
+        )
 
     # ---- Summary figure ----
     plot_summary_panel(
@@ -119,10 +152,17 @@ def main() -> None:
         default=[0, 8, 16, 33],
         help="Layer indices for UMAP visualisation",
     )
+    parser.add_argument(
+        "--data-dir",
+        default=None,
+        help="Data directory containing groups.tsv (e.g. data/raw_eukaryotic). "
+             "When present, UMAP is colored by organism group.",
+    )
     args = parser.parse_args()
 
     results_dir = Path(args.results_dir)
     (results_dir / "figures").mkdir(parents=True, exist_ok=True)
+    data_dir = Path(args.data_dir) if args.data_dir else None
 
     if args.emb_dirs:
         emb_dirs = [Path(d) for d in args.emb_dirs]
@@ -136,7 +176,7 @@ def main() -> None:
 
     all_summaries = []
     for emb_dir in emb_dirs:
-        summary = run_for_model(emb_dir, results_dir, args.umap_layers)
+        summary = run_for_model(emb_dir, results_dir, args.umap_layers, data_dir=data_dir)
         all_summaries.append(summary)
 
     summary_path = results_dir / "summary.json"

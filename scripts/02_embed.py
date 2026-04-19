@@ -10,7 +10,7 @@ ESM3 models require:
 import argparse
 from pathlib import Path
 
-from alxbio_esm.data import load_dataset
+from alxbio_esm.data import load_dataset, load_dataset_with_groups
 
 ESM2_MODELS = [
     "facebook/esm2_t6_8M_UR50D",
@@ -50,9 +50,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    ids, seqs, labels = load_dataset(
-        Path(args.data_dir), max_per_class=args.max_per_class
-    )
+    groups_tsv = Path(args.data_dir) / "groups.tsv"
+    if groups_tsv.exists():
+        # Load all sequences so every group is represented — no per-class cap
+        ids, seqs, labels, _ = load_dataset_with_groups(
+            Path(args.data_dir), max_per_class=10_000
+        )
+        print(f"[embed] Grouped dataset: {sum(l==1 for l in labels)} toxic, {sum(l==0 for l in labels)} benign")
+    else:
+        ids, seqs, labels = load_dataset(
+            Path(args.data_dir), max_per_class=args.max_per_class
+        )
 
     is_esm3 = args.model in ESM3_MODELS
     precision = args.precision or ("bf16" if is_esm3 else "fp16")

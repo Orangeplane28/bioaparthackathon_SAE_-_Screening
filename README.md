@@ -1,6 +1,6 @@
 # alxbio-esm
 
-Layer-by-layer analysis of whether ESM2 encodes bacterial toxicity in its representations — without fine-tuning. Three tests per model: linear probe AUROC, centroid separation ratio, and CKA. Outputs per-layer metrics and UMAP figures.
+Layer-by-layer analysis of whether ESM2 encodes toxicity in its representations — without fine-tuning. Three tests per model: linear probe AUROC, centroid separation ratio, and CKA. Outputs per-layer metrics and UMAP figures.
 
 ## Setup
 
@@ -8,7 +8,35 @@ Layer-by-layer analysis of whether ESM2 encodes bacterial toxicity in its repres
 uv sync
 ```
 
-Requires CUDA. Tested on RTX 4050 6 GB with ESM2-150M and ESM2-650M in FP16.
+Device agnostic
+
+---
+
+## Datasets
+
+All sequences from [UniProt Swiss-Prot](https://www.uniprot.org/) (reviewed only). Toxic class = keyword [KW-0800](https://www.uniprot.org/keywords/KW-0800). Deduplicated at 40% sequence identity.
+
+### Bacterial (taxonomy_id:2)
+
+| Dataset | Toxic | Benign | Notes |
+|---|---|---|---|
+| Standard (`data/raw/`) | 197 | 315 | Length-stratified; E. coli K12 dominates benign (184/315) — organism bias present |
+| Organism-matched (`data/raw_matched/`) | 138 | 159 | Benign drawn from same taxon as each toxic protein — bias eliminated |
+
+**Source:** `taxonomy_id:2 AND keyword:KW-0800 AND reviewed:true` (480 total pre-dedup)
+
+### Eukaryotic — venomous clades (`data/raw_eukaryotic/`)
+
+Benign proteins drawn from the same venomous clade to eliminate cross-kingdom bias.
+
+| Clade | Taxonomy ID | Toxic | Benign |
+|---|---|---|---|
+| Snakes (Serpentes) | [8570](https://www.uniprot.org/taxonomy/8570) | 872 | 262 |
+| Scorpions (Scorpiones) | [6843](https://www.uniprot.org/taxonomy/6843) | 494 | 327 |
+| Spiders (Araneae) | [6893](https://www.uniprot.org/taxonomy/6893) | 373 | 63 |
+| **Total** | | **1,739** | **652** |
+
+Group membership tracked in `data/raw_eukaryotic/groups.tsv` — used for group-colored UMAP.
 
 ---
 
@@ -18,7 +46,7 @@ Requires CUDA. Tested on RTX 4050 6 GB with ESM2-150M and ESM2-650M in FP16.
 
 **Standard** (bacterial Swiss-Prot, length-stratified):
 ```bash
-uv run python scripts/01_download.py --max-per-class 500
+uv run python scripts/01_download.py 
 ```
 
 **Organism-matched** (eliminates species-level bias — use this for cleaner results):
@@ -27,20 +55,27 @@ uv run python scripts/01b_organism_matched.py
 # writes data/raw_matched/toxic.fasta + benign.fasta
 ```
 
-Both scripts deduplicate at 40% sequence identity and report organism distribution.
+**Eukaryotic clade-matched** (snakes / scorpions / spiders):
+```bash
+uv run python scripts/01c_eukaryotic.py
+# writes data/raw_eukaryotic/toxic.fasta + benign.fasta + groups.tsv
+```
+
+All scripts deduplicate at 40% sequence identity and report organism distribution.
 
 ### Step 2 — Embed
 
 ```bash
-# 150M first (fast, ~10s), then 650M
+# Bacterial organism-matched
 uv run python scripts/02_embed.py \
   --data-dir data/raw_matched \
   --out-dir data/embeddings_matched \
-  --model facebook/esm2_t30_150M_UR50D
+  --model facebook/esm2_t33_650M_UR50D
 
+# Eukaryotic (groups.tsv detected automatically — loads all sequences)
 uv run python scripts/02_embed.py \
-  --data-dir data/raw_matched \
-  --out-dir data/embeddings_matched \
+  --data-dir data/raw_eukaryotic \
+  --out-dir data/embeddings_eukaryotic \
   --model facebook/esm2_t33_650M_UR50D
 ```
 
@@ -49,9 +84,17 @@ Each sequence is saved as a `.npz` with shape `(n_layers, d_model)` — mean-poo
 ### Step 3 — Analyse
 
 ```bash
+# Bacterial
 uv run python scripts/03_analyze.py \
   --emb-root data/embeddings_matched \
   --results-dir results/matched \
+  --umap-layers 0 8 16 33
+
+# Eukaryotic (--data-dir enables group-colored UMAP: rows=clade, cols=layer)
+uv run python scripts/03_analyze.py \
+  --emb-root data/embeddings_eukaryotic \
+  --data-dir data/raw_eukaryotic \
+  --results-dir results/eukaryotic \
   --umap-layers 0 8 16 33
 ```
 

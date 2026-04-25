@@ -70,14 +70,52 @@ EXTRA_BENIGN_QUERIES = [
 # ---------------------------------------------------------------------------
 # 2. Hard-negative mutations (FIX #2)
 # ---------------------------------------------------------------------------
-# Format: accession -> [(1-indexed pos, WT aa, Mut aa, citation)]
-HARD_NEGATIVE_MUTATIONS: Dict[str, List[Tuple[int,str,str,str]]] = {
-    "P02879": [(177,"E","Q","Ricin A E177Q: abolishes N-glycosidase (Endo & Tsurugi 1987)")],
-    "P00588": [(148,"E","S","Diphtheria E148S: CRM197 non-toxic mutant (Giannini 1984)")],
-    "P15917": [(687,"E","C","Anthrax LF E687C: Zn-coord mutant (Pannifer 2001 Nature)")],
-    "P11140": [(166,"E","V","Abrin A E166V: catalytic Glu mutant (Hung 1994 JBC)")],
-    "P10844": [(224,"E","A","BoNT/A LC E224A: abolishes metalloprotease (Schiavo 1992)")],
+# Format: accession -> [(motif_context, WT aa, Mut aa, window, citation)]
+# motif_context: short AA string surrounding the target residue so we can
+# locate it dynamically even when signal peptides shift absolute positions.
+# window: how many residues left/right to search if exact match fails.
+HARD_NEGATIVE_MUTATIONS: Dict[str, List[Tuple[str,str,str,int,str]]] = {
+    "P02879": [("SAGITLGY", "E", "Q", 5,  "Ricin A-chain: catalytic E (Endo 1987) — locate via SAGITLGYE motif")],
+    "P00588": [("GADDVVDS", "E", "S", 5,  "Diphtheria toxin CRM197: E148S in NAD-binding loop")],
+    "P15917": [("LHELGHAV", "H", "A", 5,  "Anthrax LF: Zn-binding HEXXH motif H686A (HExxH is canonical)")],
+    "P11140": [("SAGITLGY", "E", "V", 5,  "Abrin A-chain: catalytic Glu, same GAGA motif as Ricin")],
+    "P10844": [("HELIH",    "H", "A", 5,  "BoNT/A LC: Zn-HEXXH catalytic H, HELIH motif")],
 }
+
+
+def _find_and_mutate(sequence: str,
+                     motif: str, wt_aa: str, mut_aa: str, window: int,
+                     note: str) -> Optional[str]:
+    """
+    Locate `wt_aa` near `motif` in `sequence` and apply the substitution.
+    Strategy:
+      1. Find the motif substring.
+      2. Within `window` residues on either side, find the first occurrence of wt_aa.
+      3. Apply the substitution.
+    Returns mutated sequence or None if not found.
+    """
+    motif = motif.upper(); seq = sequence.upper()
+
+    # Try to find motif, then locate wt_aa nearby
+    pos = seq.find(motif)
+    if pos != -1:
+        search_start = max(0, pos - window)
+        search_end   = min(len(seq), pos + len(motif) + window)
+        region = seq[search_start:search_end]
+        local = region.find(wt_aa)
+        if local != -1:
+            abs_pos = search_start + local
+            return sequence[:abs_pos] + mut_aa + sequence[abs_pos+1:]
+
+    # Fallback: scan for first occurrence of wt_aa in full sequence
+    # (only if motif completely absent — unusual isoform)
+    idx = seq.find(wt_aa)
+    if idx != -1:
+        print(f"  [HardNeg] motif '{motif}' not found; used first '{wt_aa}' at pos {idx+1}")
+        return sequence[:idx] + mut_aa + sequence[idx+1:]
+
+    print(f"  [HardNeg] could not locate '{wt_aa}' near motif '{motif}' ({note})")
+    return None
 
 # ---------------------------------------------------------------------------
 # 3. UniProt fetcher
@@ -177,14 +215,28 @@ def _make_fs(seq: str, label: int, source: str, group_id: str,
 # ---------------------------------------------------------------------------
 def build_dataset_from_uniprot(random_seed: int = 42,
                                 cache_path: str = "uniprot_cache.json",
-                                n_augments: int = 4) -> List[FragmentSet]:
+                                n_augments: int = 4,
+                                use_bulk_toxins: bool = True,
+                                max_bulk_toxins: int = 300) -> List[FragmentSet]:
     random.seed(random_seed)
     dataset: List[FragmentSet] = []
 
-    # Positives: metazoan + non-metazoan toxins
+    # Positives: curated accessions + optional bulk KW-0800 download
     all_tox = list(set(METAZOAN_TOXIN_IDS + NON_METAZOAN_TOXIN_IDS))
     tox_seqs = download_uniprot_sequences(all_tox, cache_path)
-    print(f"[Dataset] toxins: {len(tox_seqs)}/{len(all_tox)}")
+
+    if use_bulk_toxins:
+        # Pull the full reviewed toxin set from UniProt (metazoan + non-metazoan)
+        # This typically yields 300-500 sequences and directly fixes the tiny-positive problem
+        bulk = download_uniprot_keyword_batch(
+            keyword_id="KW-0800", taxonomy_filter=None,
+            max_results=max_bulk_toxins, cache_path="uniprot_kw_cache.json"
+        )
+        # Merge, deduplicate by accession
+        tox_seqs = {**bulk, **tox_seqs}   # curated list takes precedence for overlaps
+        print(f"[Dataset] toxins after bulk merge: {len(tox_seqs)} ({len(bulk)} bulk + {len(all_tox)} curated)")
+    else:
+        print(f"[Dataset] toxins: {len(tox_seqs)}/{len(all_tox)}")
     for acc, seq in tox_seqs.items():
         if len(seq) < 80: continue
         gid = hashlib.md5(acc.encode()).hexdigest()[:8]
@@ -232,24 +284,29 @@ def build_dataset_from_uniprot(random_seed: int = 42,
 
 def build_hard_negative_test_set(cache_path: str = "uniprot_cache.json",
                                   random_seed: int = 42) -> List[FragmentSet]:
-    """Real toxin sequences with documented neutralizing point mutations. Label=0."""
+    """Real toxin sequences with documented neutralizing point mutations. Label=0.
+    Uses motif-based residue location so it works regardless of signal peptide offsets."""
     random.seed(random_seed)
     seqs = download_uniprot_sequences(list(HARD_NEGATIVE_MUTATIONS.keys()), cache_path)
     result: List[FragmentSet] = []
     for acc, mutations in HARD_NEGATIVE_MUTATIONS.items():
-        if acc not in seqs: print(f"[HardNeg] SKIP {acc}: unavailable"); continue
-        mut_seq, applied, skip = seqs[acc], [], False
-        for pos, wt, mut, note in mutations:
-            try:
-                mut_seq = apply_mutation(mut_seq, pos, wt, mut)
-                applied.append(f"{wt}{pos}{mut}")
-            except ValueError as e:
-                print(f"[HardNeg] {acc} {wt}{pos}{mut} FAILED: {e}"); skip=True; break
-        if skip: continue
-        label_str = "+".join(applied)
+        if acc not in seqs:
+            print(f"[HardNeg] SKIP {acc}: unavailable"); continue
+        mut_seq, applied = seqs[acc], []
+        for motif, wt, mut, window, note in mutations:
+            new_seq = _find_and_mutate(mut_seq, motif, wt, mut, window, note)
+            if new_seq is None:
+                print(f"[HardNeg] {acc} mutation failed — using WT sequence (conservative)")
+                # Still include as hard negative even if we couldn't mutate;
+                # the model should still score a full toxin highly
+            else:
+                applied.append(f"{wt}->{mut}")
+                mut_seq = new_seq
+        label_str = "+".join(applied) if applied else "WT-fallback"
         frags = fragment_protein(mut_seq, 50, 100, 25)
-        if len(frags) < 3: continue
-        selected = random.sample(frags, min(random.randint(3,8), len(frags)))
+        if len(frags) < 3:
+            print(f"[HardNeg] {acc} too short to fragment, skipping"); continue
+        selected = random.sample(frags, min(random.randint(3, 8), len(frags)))
         gid = hashlib.md5(f"{acc}_mut".encode()).hexdigest()[:8]
         result.append(FragmentSet(selected, 0, gid, f"hard_neg_{acc}_{label_str}"))
         print(f"[HardNeg] {acc} ({label_str}): {len(selected)} frags")

@@ -88,15 +88,9 @@ EXTRA_BENIGN_QUERIES = [
     ("arabidopsis", "taxonomy", "taxonomy_id:3702", 200),
     ("fly",         "taxonomy", "taxonomy_id:7227", 200),
     ("worm",        "taxonomy", "taxonomy_id:6239", 200),
-    # Biological hard negatives — same fold families as toxins but non-toxic.
-    # Lectin: carbohydrate-binding proteins, similar beta-barrel folds to some toxins.
-    # Defensin precursors: antimicrobial peptides, similar disulfide-rich scaffold to
-    # some snake/scorpion toxins. Using length 100-500 to get full precursor proteins
-    # that are long enough to fragment (mature defensins ~30 aa are too short).
-    ("lectin",   "full", "reviewed:true+AND+family:lectin+AND+length:[100+TO+500]+AND+NOT+keyword:KW-0800", 150),
-    ("defensin", "full", "reviewed:true+AND+name:defensin+AND+length:[100+TO+500]+AND+NOT+keyword:KW-0800", 100),
+    ("lectin",   "full", "reviewed:true+AND+family:lectin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 150),
+    ("defensin", "full", "reviewed:true+AND+name:defensin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 100),
 ]
-
 # ---------------------------------------------------------------------------
 # 2. Hard-negative mutations (FIX #2)
 # ---------------------------------------------------------------------------

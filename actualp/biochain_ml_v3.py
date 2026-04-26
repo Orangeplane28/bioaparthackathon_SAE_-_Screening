@@ -38,6 +38,26 @@ print(f"[BioChain v3] device={DEVICE}")
 # ---------------------------------------------------------------------------
 # 1. Protein accession lists
 # ---------------------------------------------------------------------------
+# Toxin family labels — used as group_id for CV splits so entire families
+# are held out from training. Proves the model learns toxicity not taxonomy.
+TOXIN_FAMILY: Dict[str, str] = {
+    # Snake toxins
+    "P00625": "snake", "Q90WC0": "snake", "P01552": "snake",
+    "P17529": "snake", "P15922": "snake", "P20049": "snake",
+    "P02978": "snake", "P01536": "snake",
+    # Scorpion toxins
+    "P81054": "scorpion", "P84891": "scorpion", "Q9S419": "scorpion",
+    # Spider toxins
+    "P16893": "spider", "P15018": "spider", "P68137": "spider",
+    # Bacterial toxins
+    "P10844": "bacterial", "P04958": "bacterial", "P00588": "bacterial",
+    "P09977": "bacterial", "P0A0M1": "bacterial", "P01555": "bacterial",
+    "P11439": "bacterial", "P15917": "bacterial", "P0A0L2": "bacterial",
+    "P15011": "bacterial", "P0A0L5": "bacterial",
+    # Plant toxins (RIPs)
+    "P02879": "plant_rip", "P11140": "plant_rip",
+}
+
 METAZOAN_TOXIN_IDS = [
     "P00625","Q90WC0","P01552","P17529","P15922","P20049",
     "P02978","P01536","P81054","P84891","Q9S419","P16893",
@@ -61,10 +81,20 @@ NON_METAZOAN_TOXIN_IDS = [
 BENIGN_IDS_HUMAN  = ["P08524","O00624","P04637","P00533","P01308"]
 BENIGN_IDS_ECOLI  = ["P0ABU9","P0A8W0","P00722","P0A9Q1"]
 BENIGN_IDS_YEAST  = ["P00330","P00549","P00925"]
+# Format: (label, query_type, query_value, n)
+# query_type "taxonomy" -> builds reviewed:true AND {value} AND NOT KW-0800
+# query_type "full"     -> uses {value} verbatim (for lectin/defensin etc.)
 EXTRA_BENIGN_QUERIES = [
-    ("arabidopsis", "taxonomy_id:3702",  200),
-    ("fly",         "taxonomy_id:7227",  200),
-    ("worm",        "taxonomy_id:6239",  200),
+    ("arabidopsis", "taxonomy", "taxonomy_id:3702", 200),
+    ("fly",         "taxonomy", "taxonomy_id:7227", 200),
+    ("worm",        "taxonomy", "taxonomy_id:6239", 200),
+    # Biological hard negatives — same fold families as toxins but non-toxic.
+    # Lectin: carbohydrate-binding proteins, similar beta-barrel folds to some toxins.
+    # Defensin precursors: antimicrobial peptides, similar disulfide-rich scaffold to
+    # some snake/scorpion toxins. Using length 100-500 to get full precursor proteins
+    # that are long enough to fragment (mature defensins ~30 aa are too short).
+    ("lectin",   "full", "reviewed:true+AND+family:lectin+AND+length:[100+TO+500]+AND+NOT+keyword:KW-0800", 150),
+    ("defensin", "full", "reviewed:true+AND+name:defensin+AND+length:[100+TO+500]+AND+NOT+keyword:KW-0800", 100),
 ]
 
 # ---------------------------------------------------------------------------
@@ -143,32 +173,48 @@ def download_uniprot_sequences(accessions: List[str],
 def download_uniprot_keyword_batch(keyword_id: str = "KW-0800",
                                     taxonomy_filter: Optional[str] = None,
                                     max_results: int = 500,
-                                    cache_path: str = "uniprot_kw_cache.json") -> Dict[str,str]:
-    """Download reviewed proteins by keyword. taxonomy_filter=None removes metazoan restriction."""
+                                    cache_path: str = "uniprot_kw_cache.json"
+                                    ) -> Tuple[Dict[str,str], Dict[str,str]]:
+    """Download reviewed proteins by keyword.
+    Returns (seq_dict, organism_dict) — organism used as group_id to prevent
+    homolog leakage across CV folds for bulk toxins."""
     cache_key = f"{keyword_id}_{taxonomy_filter}_{max_results}"
     cache: Dict[str,Dict] = {}
     if os.path.exists(cache_path):
         with open(cache_path) as f:
             cache = json.load(f)
     if cache_key in cache:
-        return cache[cache_key]
+        entry = cache[cache_key]
+        # Handle old cache format (plain dict of sequences)
+        if entry and isinstance(next(iter(entry.values())), str):
+            return entry, {}
+        seqs = {acc: v["seq"] for acc, v in entry.items()}
+        orgs = {acc: v["org"] for acc, v in entry.items()}
+        return seqs, orgs
     parts = [f"reviewed:true", f"keyword:{keyword_id}"]
     if taxonomy_filter:
         parts.append(taxonomy_filter)
     url = (f"https://rest.uniprot.org/uniprotkb/search"
            f"?query={'+AND+'.join(parts)}&format=json"
-           f"&fields=accession,sequence&size={max_results}")
+           f"&fields=accession,sequence,organism_name&size={max_results}")
     try:
         r = requests.get(url, timeout=30); r.raise_for_status()
-        seqs = {e["primaryAccession"]: e["sequence"]["value"]
-                for e in r.json().get("results",[]) if "sequence" in e}
-        cache[cache_key] = seqs
+        results = r.json().get("results", [])
+        seqs, orgs = {}, {}
+        for e in results:
+            if "sequence" not in e: continue
+            acc = e["primaryAccession"]
+            seqs[acc] = e["sequence"]["value"]
+            # organism.scientificName gives e.g. "Clostridium botulinum" — use as group
+            org = e.get("organism", {}).get("scientificName", "unknown")
+            orgs[acc] = org
+        cache[cache_key] = {acc: {"seq": seqs[acc], "org": orgs[acc]} for acc in seqs}
         with open(cache_path,"w") as f:
             json.dump(cache, f)
-        print(f"[UniProt] batch: {len(seqs)} proteins")
-        return seqs
+        print(f"[UniProt] batch: {len(seqs)} proteins ({len(set(orgs.values()))} organisms)")
+        return seqs, orgs
     except Exception as e:
-        print(f"[UniProt] batch failed: {e}"); return {}
+        print(f"[UniProt] batch failed: {e}"); return {}, {}
 
 # ---------------------------------------------------------------------------
 # 4. Mutation utilities
@@ -225,21 +271,34 @@ def build_dataset_from_uniprot(random_seed: int = 42,
     all_tox = list(set(METAZOAN_TOXIN_IDS + NON_METAZOAN_TOXIN_IDS))
     tox_seqs = download_uniprot_sequences(all_tox, cache_path)
 
+    bulk_organisms: Dict[str, str] = {}
     if use_bulk_toxins:
-        # Pull the full reviewed toxin set from UniProt (metazoan + non-metazoan)
-        # This typically yields 300-500 sequences and directly fixes the tiny-positive problem
-        bulk = download_uniprot_keyword_batch(
+        # Pull the full reviewed toxin set from UniProt (metazoan + non-metazoan).
+        # Also fetches organism name — used as group_id to prevent homolog leakage:
+        # two Ricin variants from R.communis share organism group, so StratifiedGroupKFold
+        # keeps them on the same side of every train/test split.
+        bulk, bulk_organisms = download_uniprot_keyword_batch(
             keyword_id="KW-0800", taxonomy_filter=None,
             max_results=max_bulk_toxins, cache_path="uniprot_kw_cache.json"
         )
-        # Merge, deduplicate by accession
         tox_seqs = {**bulk, **tox_seqs}   # curated list takes precedence for overlaps
         print(f"[Dataset] toxins after bulk merge: {len(tox_seqs)} ({len(bulk)} bulk + {len(all_tox)} curated)")
     else:
         print(f"[Dataset] toxins: {len(tox_seqs)}/{len(all_tox)}")
+
     for acc, seq in tox_seqs.items():
         if len(seq) < 80: continue
-        gid = hashlib.md5(acc.encode()).hexdigest()[:8]
+        # group_id priority:
+        #   1. Curated family label (snake/scorpion/spider/bacterial/plant_rip)
+        #   2. Organism name from UniProt bulk download (prevents homolog leakage)
+        #   3. Accession hash fallback (should never reach this for well-fetched data)
+        if acc in TOXIN_FAMILY:
+            gid = TOXIN_FAMILY[acc]
+        elif acc in bulk_organisms and bulk_organisms[acc] != "unknown":
+            # Sanitise organism name -> safe group key (e.g. "Clostridium botulinum" -> "clostridium_botulinum")
+            gid = bulk_organisms[acc].lower().replace(" ", "_")[:32]
+        else:
+            gid = hashlib.md5(acc.encode()).hexdigest()[:8]
         for i in range(n_augments):
             random.seed(random_seed + i*1000 + int(hashlib.md5(acc.encode()).hexdigest(), 16) % 1000)
             fs = _make_fs(seq, 1, f"toxin_{acc}_{i}", gid)
@@ -257,11 +316,14 @@ def build_dataset_from_uniprot(random_seed: int = 42,
             fs = _make_fs(seq, 0, f"benign_{acc}_{i}", gid)
             if fs: dataset.append(fs)
 
-    # Extra negatives for FPR@0.001 stability (FIX #3)
-    for org, tax, n in EXTRA_BENIGN_QUERIES:
+    # Extra negatives: organism-based + biological hard negatives (lectin, defensin)
+    for org, qtype, qval, n in EXTRA_BENIGN_QUERIES:
+        if qtype == "taxonomy":
+            query = f"reviewed:true+AND+{qval}+AND+NOT+keyword:KW-0800"
+        else:  # "full" — use verbatim
+            query = qval
         url = (f"https://rest.uniprot.org/uniprotkb/search"
-               f"?query=reviewed:true+AND+{tax}+AND+NOT+keyword:KW-0800"
-               f"&format=json&fields=accession,sequence&size={n}")
+               f"?query={query}&format=json&fields=accession,sequence&size={n}")
         try:
             r = requests.get(url, timeout=30); r.raise_for_status()
             extra = {e["primaryAccession"]: e["sequence"]["value"]
@@ -280,6 +342,11 @@ def build_dataset_from_uniprot(random_seed: int = 42,
     random.shuffle(dataset)
     n_pos = sum(1 for d in dataset if d.label==1)
     print(f"[Dataset] total={len(dataset)} pos={n_pos} neg={len(dataset)-n_pos}")
+
+    # Print family distribution so we can verify family-level holdout is working
+    from collections import Counter
+    family_counts = Counter(fs.group_id for fs in dataset if fs.label == 1)
+    print(f"[Dataset] positive family distribution: {dict(family_counts)}")
     return dataset
 
 def build_hard_negative_test_set(cache_path: str = "uniprot_cache.json",
@@ -767,6 +834,7 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
         fold_metrics.append({k:v for k,v in tm.items() if k not in ("probs","labels")})
         print(f"  AUC={tm['auc']:.4f}  AP={tm['ap']:.4f}")
         final_model = model
+        last_te_data = te_data   # save last fold's test set for calibration (no leakage)
     num_keys = [k for k in fold_metrics[0] if isinstance(fold_metrics[0][k],float)]
     summary = {k:{"mean":round(float(np.mean([fm[k] for fm in fold_metrics])),4),
                   "std": round(float(np.std( [fm[k] for fm in fold_metrics])),4),
@@ -776,7 +844,8 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
     for k,v in summary.items():
         print(f"  {k}: {v['mean']:.4f} +/- {v['std']:.4f}  {v['per_fold']}")
     return {"fold_metrics":fold_metrics,"summary":summary,
-            "final_model":final_model,"emb_cache":emb_cache}
+            "final_model":final_model,"emb_cache":emb_cache,
+            "last_fold_test_data":last_te_data}
 
 # ---------------------------------------------------------------------------
 # 15. Single-split training pipeline
@@ -884,12 +953,11 @@ if __name__ == "__main__":
                             n_epochs=args.epochs, batch_size=args.batch)
         model = cv["final_model"]
         emb_cache = cv["emb_cache"]
-        # FIX #2: carve out a held-out slice so calibration always runs
-        _groups = [fs.group_id for fs in dataset]
-        _labels = [fs.label for fs in dataset]
-        _spl = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
-        _, _te_idx = next(_spl.split(dataset, _labels, _groups))
-        test_data_for_cal = [dataset[i] for i in _te_idx]
+        # Use last fold's test data for calibration — this data was genuinely held out
+        # from the last fold's training, so there is no leakage into the final model.
+        # (Previous approach re-split the full dataset which allowed training proteins
+        # to appear in the calibration test set.)
+        test_data_for_cal = cv["last_fold_test_data"]
         run_info = {"embed_dim":embed_dim, "encoder":encoder, "dataset":dataset,
                     "test_data":test_data_for_cal, "emb_cache":emb_cache}
     else:
@@ -900,25 +968,63 @@ if __name__ == "__main__":
 
     # Adversarial eval — always runs (fast, critical)
     hard_neg = build_hard_negative_test_set(cache_path=args.cache)
-    evaluate_adversarial(model, encoder, hard_neg, threshold=0.5)
+    adv_results = evaluate_adversarial(model, encoder, hard_neg, threshold=0.5)
 
-    # Calibration eval — always runs (FIX #2: now also works in CV mode)
+    # Calibration eval — always runs
+    cal_results = {}
     if "test_data" in run_info:
         te_ld = make_loader(run_info["test_data"], encoder, args.batch,
                             shuffle=False, embedding_cache=run_info.get("emb_cache"))
-        evaluate_calibration(model, te_ld)
+        cal_results = evaluate_calibration(model, te_ld)
 
     # Fragment-count robustness — opt-in
+    # NOTE: intentionally uses known training proteins here. Robustness sweep measures
+    # whether AUC degrades as fragment count k decreases (2→15), not generalization
+    # to unseen proteins. Using training proteins is valid for this specific question.
+    rob_results = {}
     if args.robustness:
         t_seqs = download_uniprot_sequences(NON_METAZOAN_TOXIN_IDS[:5], args.cache)
         b_seqs = download_uniprot_sequences(BENIGN_IDS_HUMAN[:5], args.cache)
         tp = {a:(s,1) for a,s in t_seqs.items()}
         tp.update({a:(s,0) for a,s in b_seqs.items()})
-        fragment_count_robustness(model, encoder, tp)
+        rob_results = fragment_count_robustness(model, encoder, tp)
 
-    torch.save({"model_state":model.state_dict(),
-                "embed_dim":embed_dim,
-                "architecture":{"input_dim":embed_dim,"d":128,"h":4,"m":8,"n_isab":2}},
-               "biochain_model_v3.pt")
+    # ── Save checkpoint ────────────────────────────────────────────────────────
+    cv_summary = cv["summary"] if args.cv else {}
+    fold_metrics = cv["fold_metrics"] if args.cv else []
+    history = (fold_metrics[0].get("history", {}) if fold_metrics
+               else run_info.get("history", {}))
+
+    torch.save({
+        "model_state":  model.state_dict(),
+        "embed_dim":    embed_dim,
+        "encoder_name": enc_name,
+        "architecture": {"input_dim":embed_dim,"d":128,"h":4,"m":8,"n_isab":2},
+        "run_info": {
+            "cv_summary":   cv_summary,
+            "fold_metrics": [{k:v for k,v in fm.items()
+                              if k not in ("probs","labels")} for fm in fold_metrics],
+            "adversarial":  adv_results,
+            "calibration":  {k:v for k,v in cal_results.items() if k != "reliability"},
+            "robustness":   rob_results,
+            "history":      history,
+        }
+    }, "biochain_model_v3.pt")
     print("\n[Saved] biochain_model_v3.pt")
+
+    # ── Save results JSON (for biochain_visualize.py and reporting) ────────────
+    results_json = {
+        "encoder":      enc_name,
+        "embed_dim":    embed_dim,
+        "cv_summary":   cv_summary,
+        "fold_metrics": [{k:v for k,v in fm.items()
+                          if k not in ("probs","labels")} for fm in fold_metrics],
+        "adversarial":  adv_results,
+        "calibration":  {k:v for k,v in cal_results.items() if k != "reliability"},
+        "robustness":   rob_results,
+        "history":      history,
+    }
+    with open("biochain_results.json", "w") as f:
+        json.dump(results_json, f, indent=2, default=str)
+    print("[Saved] biochain_results.json")
     print("[Done]")

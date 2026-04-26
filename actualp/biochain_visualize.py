@@ -341,8 +341,17 @@ def plot_fragment_importance(importances: list[float],
 
 def plot_robustness(robustness: dict) -> Path:
     """
-    robustness: {k (int or str): {"auc": float, "ap": float}, ...}
+    Accepts either:
+      {k (int or str): {"auc": float, "ap"?: float}, ...}
+      {"by_fragment_count": [{"n_frags": k, "auc": ..., "ap"?: ...}, ...]}
     """
+    if "by_fragment_count" in robustness and isinstance(
+        robustness["by_fragment_count"], list
+    ):
+        robustness = {
+            row["n_frags"]: {k: v for k, v in row.items() if k != "n_frags"}
+            for row in robustness["by_fragment_count"]
+        }
     ks   = sorted(int(k) for k in robustness)
     aucs = [robustness[str(k)]["auc"] if str(k) in robustness
             else robustness[k]["auc"] for k in ks]

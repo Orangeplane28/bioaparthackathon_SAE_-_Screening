@@ -1,0 +1,565 @@
+[BioChain v3] device=mps
+============================================================
+BioChain ML Engine v3
+============================================================
+  encoder=ESM-3  cv=True  epochs=40
+[UniProt] fetching 1 sequences...
+[UniProt] batch: 300 proteins (190 organisms)
+[Dataset] toxins after bulk merge: 324 (300 bulk + 27 curated)
+[Dataset] explicit benign: 12
+[Dataset] extra benign (arabidopsis): 200
+[Dataset] extra benign (fly): 200
+[Dataset] extra benign (worm): 200
+[Dataset] extra benign (lectin): 150
+[Dataset] extra benign (defensin): 74
+[Dataset] total=2542 pos=860 neg=1682
+[Dataset] positive groups: 57 named  +  0 md5-fallback
+  [OK] All positive group_ids are named — no md5 fallback.
+[Dataset] positive family distribution: {'snake': 416, 'cerrophidion_godmani': 4, 'arabidopsis_thaliana': 4, 'escherichia_coli': 4, 'bacterial': 104, 'pomacea_canaliculata': 8, 'spider': 40, 'cupiennius_salei': 4, 'plant_rip': 28, 'streptococcus_pyogenes_serotype_': 4, 'conus_geographus': 4, 'gloydius_brevicauda': 12, 'enterobacter_cloacae_subsp._cloa': 4, 'acanthaster_planci': 4, 'cheiracanthium_punctorium': 8, 'gloydius_halys': 12, 'escherichia_coli_(strain_k12)': 4, 'mycobacterium_tuberculosis_(stra': 8, 'eisenia_fetida': 4, 'bothrocophias_hyoprora': 4, 'conus_radiatus': 4, 'scorpion': 8, 'bombina_maxima': 8, 'clostridioides_difficile': 4, 'polygonatum_multiflorum': 4, 'schizosaccharomyces_pombe_(strai': 4, 'dipetalogaster_maximus': 4, 'hemiscorpius_lepturus': 4, 'bothrocophias_andianus': 4, 'boiga_irregularis': 8, 'escherichia_coli_o127:h6_(strain': 8, 'ornithorhynchus_anatinus': 4, 'sicarius_terrosus': 4, 'aedes_aegypti': 8, 'escherichia_coli_o157:h7_(strain': 4, 'bacillus_subtilis_(strain_168)': 12, 'streptococcus_pyogenes': 4, 'phaseolus_vulgaris': 4, 'chromobacterium_violaceum_(strai': 4, 'craspedocephalus_borneensis': 4, 'sambucus_nigra': 8, 'escherichia_phage_933w': 4, 'gloydius_shedaoensis': 4, 'bacillus_thuringiensis_subsp._is': 4, 'rotavirus_a_(strain_rva/sa11-bot': 4, 'physalaemus_nattereri': 4, 'hoplocephalus_stephensii': 4, 'burkholderia_pseudomallei': 4, 'lachesana_tarabaevi': 4, 'ceratocystis_fimbriata_f._sp._pl': 4, 'myrmecia_gulosa': 4, 'actinia_fragacea': 4, 'heloderma_suspectum_cinctum': 4, 'gloydius_blomhoffii': 4, 'condylactis_gigantea': 4, 'rotavirus_a_(strain_rva/cow/unit': 4, 'porthidium_ophryomegas': 4}
+[ESM-3] loading esm3_sm_open_v1...
+Fetching 22 files:   0%|          | 0/22 [00:00<?, ?it/s]Fetching 22 files: 100%|██████████| 22/22 [00:00<00:00, 272196.72it/s]
+[ESM-3] loaded. embed_dim=1536. frozen (float32).
+[Precompute] encoding 12314 unique fragments once...
+[Precompute] done. Cache size: 12314 fragments.
+
+[CV] fold 1/5
+  [OK] No group overlap between train and test
+
+  ──────────────────────────────────────────────────────────────
+                          SPLIT SUMMARY                         
+  ──────────────────────────────────────────────────────────────
+                                       TRAIN        TEST
+  Total samples                         1790         752
+  Positives (toxin)                      444         416
+  Negatives (benign)                    1346         336
+  ──────────────────────────────────────────────────────────────
+
+  POSITIVES — families/organisms in each split:
+  Group                              Train    Test
+  ···············································
+  acanthaster_planci                     4       0
+  actinia_fragacea                       4       0
+  aedes_aegypti                          8       0
+  arabidopsis_thaliana                   4       0
+  bacillus_subtilis_(strain_168)        12       0
+  bacillus_thuringiensis_subsp._is       4       0
+  bacterial                            104       0
+  boiga_irregularis                      8       0
+  bombina_maxima                         8       0
+  bothrocophias_andianus                 4       0
+  bothrocophias_hyoprora                 4       0
+  burkholderia_pseudomallei              4       0
+  ceratocystis_fimbriata_f._sp._pl       4       0
+  cerrophidion_godmani                   4       0
+  cheiracanthium_punctorium              8       0
+  chromobacterium_violaceum_(strai       4       0
+  clostridioides_difficile               4       0
+  condylactis_gigantea                   4       0
+  conus_geographus                       4       0
+  conus_radiatus                         4       0
+  craspedocephalus_borneensis            4       0
+  cupiennius_salei                       4       0
+  dipetalogaster_maximus                 4       0
+  eisenia_fetida                         4       0
+  enterobacter_cloacae_subsp._cloa       4       0
+  escherichia_coli                       4       0
+  escherichia_coli_(strain_k12)          4       0
+  escherichia_coli_o127:h6_(strain       8       0
+  escherichia_coli_o157:h7_(strain       4       0
+  escherichia_phage_933w                 4       0
+  gloydius_blomhoffii                    4       0
+  gloydius_brevicauda                   12       0
+  gloydius_halys                        12       0
+  gloydius_shedaoensis                   4       0
+  heloderma_suspectum_cinctum            4       0
+  hemiscorpius_lepturus                  4       0
+  hoplocephalus_stephensii               4       0
+  lachesana_tarabaevi                    4       0
+  mycobacterium_tuberculosis_(stra       8       0
+  myrmecia_gulosa                        4       0
+  ornithorhynchus_anatinus               4       0
+  phaseolus_vulgaris                     4       0
+  physalaemus_nattereri                  4       0
+  plant_rip                             28       0
+  polygonatum_multiflorum                4       0
+  pomacea_canaliculata                   8       0
+  porthidium_ophryomegas                 4       0
+  rotavirus_a_(strain_rva/cow/unit       4       0
+  rotavirus_a_(strain_rva/sa11-bot       4       0
+  sambucus_nigra                         8       0
+  schizosaccharomyces_pombe_(strai       4       0
+  scorpion                               8       0
+  sicarius_terrosus                      4       0
+  snake                                  0     416 <-- HELD OUT
+  spider                                40       0
+  streptococcus_pyogenes                 4       0
+  streptococcus_pyogenes_serotype_       4       0
+
+  NEGATIVES — top benign groups in each split:
+  Group                              Train    Test
+  ···············································
+  f6bc644c                               4       0
+  e6d52c14                               4       0
+  60ded0ea                               4       0
+  94829e1b                               0       4
+  c5fbf828                               4       0
+  353c0715                               0       4
+  c5ee2048                               4       0
+  9a4c43cd                               4       0
+  73408ffe                               4       0
+  31eea1c8                               4       0
+  cd27b27e                               4       0
+  a516887a                               4       0
+  73f15eb8                               4       0
+  1d438656                               2       0
+  3bf03abb                               2       0
+  5fe85cec                               2       0
+  2e1337cd                               0       2
+  0188aefd                               2       0
+  bcc58ed0                               2       0
+  4e5b124c                               2       0
+  ... and 808 more benign groups
+  ──────────────────────────────────────────────────────────────
+
+  AUC=0.9091  AP=0.9449
+
+[CV] fold 2/5
+  [OK] No group overlap between train and test
+
+  ──────────────────────────────────────────────────────────────
+                          SPLIT SUMMARY                         
+  ──────────────────────────────────────────────────────────────
+                                       TRAIN        TEST
+  Total samples                         2094         448
+  Positives (toxin)                      748         112
+  Negatives (benign)                    1346         336
+  ──────────────────────────────────────────────────────────────
+
+  POSITIVES — families/organisms in each split:
+  Group                              Train    Test
+  ···············································
+  acanthaster_planci                     4       0
+  actinia_fragacea                       4       0
+  aedes_aegypti                          8       0
+  arabidopsis_thaliana                   4       0
+  bacillus_subtilis_(strain_168)        12       0
+  bacillus_thuringiensis_subsp._is       4       0
+  bacterial                              0     104 <-- HELD OUT
+  boiga_irregularis                      8       0
+  bombina_maxima                         8       0
+  bothrocophias_andianus                 4       0
+  bothrocophias_hyoprora                 4       0
+  burkholderia_pseudomallei              4       0
+  ceratocystis_fimbriata_f._sp._pl       4       0
+  cerrophidion_godmani                   4       0
+  cheiracanthium_punctorium              8       0
+  chromobacterium_violaceum_(strai       4       0
+  clostridioides_difficile               4       0
+  condylactis_gigantea                   4       0
+  conus_geographus                       4       0
+  conus_radiatus                         0       4 <-- HELD OUT
+  craspedocephalus_borneensis            4       0
+  cupiennius_salei                       4       0
+  dipetalogaster_maximus                 4       0
+  eisenia_fetida                         0       4 <-- HELD OUT
+  enterobacter_cloacae_subsp._cloa       4       0
+  escherichia_coli                       4       0
+  escherichia_coli_(strain_k12)          4       0
+  escherichia_coli_o127:h6_(strain       8       0
+  escherichia_coli_o157:h7_(strain       4       0
+  escherichia_phage_933w                 4       0
+  gloydius_blomhoffii                    4       0
+  gloydius_brevicauda                   12       0
+  gloydius_halys                        12       0
+  gloydius_shedaoensis                   4       0
+  heloderma_suspectum_cinctum            4       0
+  hemiscorpius_lepturus                  4       0
+  hoplocephalus_stephensii               4       0
+  lachesana_tarabaevi                    4       0
+  mycobacterium_tuberculosis_(stra       8       0
+  myrmecia_gulosa                        4       0
+  ornithorhynchus_anatinus               4       0
+  phaseolus_vulgaris                     4       0
+  physalaemus_nattereri                  4       0
+  plant_rip                             28       0
+  polygonatum_multiflorum                4       0
+  pomacea_canaliculata                   8       0
+  porthidium_ophryomegas                 4       0
+  rotavirus_a_(strain_rva/cow/unit       4       0
+  rotavirus_a_(strain_rva/sa11-bot       4       0
+  sambucus_nigra                         8       0
+  schizosaccharomyces_pombe_(strai       4       0
+  scorpion                               8       0
+  sicarius_terrosus                      4       0
+  snake                                416       0
+  spider                                40       0
+  streptococcus_pyogenes                 4       0
+  streptococcus_pyogenes_serotype_       4       0
+
+  NEGATIVES — top benign groups in each split:
+  Group                              Train    Test
+  ···············································
+  f6bc644c                               4       0
+  e6d52c14                               4       0
+  60ded0ea                               4       0
+  94829e1b                               4       0
+  c5fbf828                               4       0
+  353c0715                               4       0
+  c5ee2048                               0       4
+  9a4c43cd                               0       4
+  73408ffe                               0       4
+  31eea1c8                               4       0
+  cd27b27e                               4       0
+  a516887a                               4       0
+  73f15eb8                               4       0
+  1d438656                               2       0
+  2e1337cd                               2       0
+  3bf03abb                               2       0
+  5fe85cec                               2       0
+  0188aefd                               0       2
+  bcc58ed0                               2       0
+  4e5b124c                               2       0
+  ... and 808 more benign groups
+  ──────────────────────────────────────────────────────────────
+
+  AUC=0.9003  AP=0.7859
+
+[CV] fold 3/5
+  [OK] No group overlap between train and test
+
+  ──────────────────────────────────────────────────────────────
+                          SPLIT SUMMARY                         
+  ──────────────────────────────────────────────────────────────
+                                       TRAIN        TEST
+  Total samples                         2094         448
+  Positives (toxin)                      748         112
+  Negatives (benign)                    1346         336
+  ──────────────────────────────────────────────────────────────
+
+  POSITIVES — families/organisms in each split:
+  Group                              Train    Test
+  ···············································
+  acanthaster_planci                     4       0
+  actinia_fragacea                       4       0
+  aedes_aegypti                          8       0
+  arabidopsis_thaliana                   4       0
+  bacillus_subtilis_(strain_168)        12       0
+  bacillus_thuringiensis_subsp._is       4       0
+  bacterial                            104       0
+  boiga_irregularis                      8       0
+  bombina_maxima                         8       0
+  bothrocophias_andianus                 4       0
+  bothrocophias_hyoprora                 4       0
+  burkholderia_pseudomallei              4       0
+  ceratocystis_fimbriata_f._sp._pl       4       0
+  cerrophidion_godmani                   0       4 <-- HELD OUT
+  cheiracanthium_punctorium              0       8 <-- HELD OUT
+  chromobacterium_violaceum_(strai       4       0
+  clostridioides_difficile               4       0
+  condylactis_gigantea                   0       4 <-- HELD OUT
+  conus_geographus                       0       4 <-- HELD OUT
+  conus_radiatus                         4       0
+  craspedocephalus_borneensis            0       4 <-- HELD OUT
+  cupiennius_salei                       4       0
+  dipetalogaster_maximus                 4       0
+  eisenia_fetida                         4       0
+  enterobacter_cloacae_subsp._cloa       0       4 <-- HELD OUT
+  escherichia_coli                       4       0
+  escherichia_coli_(strain_k12)          4       0
+  escherichia_coli_o127:h6_(strain       0       8 <-- HELD OUT
+  escherichia_coli_o157:h7_(strain       4       0
+  escherichia_phage_933w                 4       0
+  gloydius_blomhoffii                    0       4 <-- HELD OUT
+  gloydius_brevicauda                   12       0
+  gloydius_halys                        12       0
+  gloydius_shedaoensis                   0       4 <-- HELD OUT
+  heloderma_suspectum_cinctum            4       0
+  hemiscorpius_lepturus                  4       0
+  hoplocephalus_stephensii               0       4 <-- HELD OUT
+  lachesana_tarabaevi                    0       4 <-- HELD OUT
+  mycobacterium_tuberculosis_(stra       8       0
+  myrmecia_gulosa                        4       0
+  ornithorhynchus_anatinus               4       0
+  phaseolus_vulgaris                     4       0
+  physalaemus_nattereri                  4       0
+  plant_rip                             28       0
+  polygonatum_multiflorum                4       0
+  pomacea_canaliculata                   8       0
+  porthidium_ophryomegas                 4       0
+  rotavirus_a_(strain_rva/cow/unit       0       4 <-- HELD OUT
+  rotavirus_a_(strain_rva/sa11-bot       4       0
+  sambucus_nigra                         8       0
+  schizosaccharomyces_pombe_(strai       0       4 <-- HELD OUT
+  scorpion                               8       0
+  sicarius_terrosus                      0       4 <-- HELD OUT
+  snake                                416       0
+  spider                                 0      40 <-- HELD OUT
+  streptococcus_pyogenes                 0       4 <-- HELD OUT
+  streptococcus_pyogenes_serotype_       0       4 <-- HELD OUT
+
+  NEGATIVES — top benign groups in each split:
+  Group                              Train    Test
+  ···············································
+  f6bc644c                               4       0
+  e6d52c14                               0       4
+  60ded0ea                               4       0
+  94829e1b                               4       0
+  c5fbf828                               4       0
+  353c0715                               4       0
+  c5ee2048                               4       0
+  9a4c43cd                               4       0
+  73408ffe                               4       0
+  31eea1c8                               4       0
+  cd27b27e                               0       4
+  a516887a                               4       0
+  73f15eb8                               4       0
+  1d438656                               2       0
+  2e1337cd                               2       0
+  5fe85cec                               2       0
+  3bf03abb                               0       2
+  0188aefd                               2       0
+  bcc58ed0                               0       2
+  4e5b124c                               2       0
+  ... and 808 more benign groups
+  ──────────────────────────────────────────────────────────────
+
+  AUC=0.9366  AP=0.8947
+
+[CV] fold 4/5
+  [OK] No group overlap between train and test
+
+  ──────────────────────────────────────────────────────────────
+                          SPLIT SUMMARY                         
+  ──────────────────────────────────────────────────────────────
+                                       TRAIN        TEST
+  Total samples                         2094         448
+  Positives (toxin)                      748         112
+  Negatives (benign)                    1346         336
+  ──────────────────────────────────────────────────────────────
+
+  POSITIVES — families/organisms in each split:
+  Group                              Train    Test
+  ···············································
+  acanthaster_planci                     0       4 <-- HELD OUT
+  actinia_fragacea                       4       0
+  aedes_aegypti                          0       8 <-- HELD OUT
+  arabidopsis_thaliana                   0       4 <-- HELD OUT
+  bacillus_subtilis_(strain_168)        12       0
+  bacillus_thuringiensis_subsp._is       0       4 <-- HELD OUT
+  bacterial                            104       0
+  boiga_irregularis                      8       0
+  bombina_maxima                         8       0
+  bothrocophias_andianus                 0       4 <-- HELD OUT
+  bothrocophias_hyoprora                 4       0
+  burkholderia_pseudomallei              4       0
+  ceratocystis_fimbriata_f._sp._pl       4       0
+  cerrophidion_godmani                   4       0
+  cheiracanthium_punctorium              8       0
+  chromobacterium_violaceum_(strai       0       4 <-- HELD OUT
+  clostridioides_difficile               4       0
+  condylactis_gigantea                   4       0
+  conus_geographus                       4       0
+  conus_radiatus                         4       0
+  craspedocephalus_borneensis            4       0
+  cupiennius_salei                       0       4 <-- HELD OUT
+  dipetalogaster_maximus                 4       0
+  eisenia_fetida                         4       0
+  enterobacter_cloacae_subsp._cloa       4       0
+  escherichia_coli                       0       4 <-- HELD OUT
+  escherichia_coli_(strain_k12)          0       4 <-- HELD OUT
+  escherichia_coli_o127:h6_(strain       8       0
+  escherichia_coli_o157:h7_(strain       4       0
+  escherichia_phage_933w                 0       4 <-- HELD OUT
+  gloydius_blomhoffii                    4       0
+  gloydius_brevicauda                   12       0
+  gloydius_halys                        12       0
+  gloydius_shedaoensis                   4       0
+  heloderma_suspectum_cinctum            0       4 <-- HELD OUT
+  hemiscorpius_lepturus                  0       4 <-- HELD OUT
+  hoplocephalus_stephensii               4       0
+  lachesana_tarabaevi                    4       0
+  mycobacterium_tuberculosis_(stra       8       0
+  myrmecia_gulosa                        4       0
+  ornithorhynchus_anatinus               4       0
+  phaseolus_vulgaris                     4       0
+  physalaemus_nattereri                  0       4 <-- HELD OUT
+  plant_rip                              0      28 <-- HELD OUT
+  polygonatum_multiflorum                0       4 <-- HELD OUT
+  pomacea_canaliculata                   0       8 <-- HELD OUT
+  porthidium_ophryomegas                 4       0
+  rotavirus_a_(strain_rva/cow/unit       4       0
+  rotavirus_a_(strain_rva/sa11-bot       4       0
+  sambucus_nigra                         0       8 <-- HELD OUT
+  schizosaccharomyces_pombe_(strai       4       0
+  scorpion                               0       8 <-- HELD OUT
+  sicarius_terrosus                      4       0
+  snake                                416       0
+  spider                                40       0
+  streptococcus_pyogenes                 4       0
+  streptococcus_pyogenes_serotype_       4       0
+
+  NEGATIVES — top benign groups in each split:
+  Group                              Train    Test
+  ···············································
+  f6bc644c                               0       4
+  e6d52c14                               4       0
+  60ded0ea                               4       0
+  94829e1b                               4       0
+  c5fbf828                               0       4
+  353c0715                               4       0
+  c5ee2048                               4       0
+  9a4c43cd                               4       0
+  73408ffe                               4       0
+  31eea1c8                               4       0
+  cd27b27e                               4       0
+  a516887a                               4       0
+  73f15eb8                               0       4
+  1d438656                               0       2
+  2e1337cd                               2       0
+  3bf03abb                               2       0
+  5fe85cec                               2       0
+  0188aefd                               2       0
+  bcc58ed0                               2       0
+  4e5b124c                               2       0
+  ... and 808 more benign groups
+  ──────────────────────────────────────────────────────────────
+
+  AUC=0.8507  AP=0.6927
+
+[CV] fold 5/5
+  [OK] No group overlap between train and test
+
+  ──────────────────────────────────────────────────────────────
+                          SPLIT SUMMARY                         
+  ──────────────────────────────────────────────────────────────
+                                       TRAIN        TEST
+  Total samples                         2096         446
+  Positives (toxin)                      752         108
+  Negatives (benign)                    1344         338
+  ──────────────────────────────────────────────────────────────
+
+  POSITIVES — families/organisms in each split:
+  Group                              Train    Test
+  ···············································
+  acanthaster_planci                     4       0
+  actinia_fragacea                       0       4 <-- HELD OUT
+  aedes_aegypti                          8       0
+  arabidopsis_thaliana                   4       0
+  bacillus_subtilis_(strain_168)         0      12 <-- HELD OUT
+  bacillus_thuringiensis_subsp._is       4       0
+  bacterial                            104       0
+  boiga_irregularis                      0       8 <-- HELD OUT
+  bombina_maxima                         0       8 <-- HELD OUT
+  bothrocophias_andianus                 4       0
+  bothrocophias_hyoprora                 0       4 <-- HELD OUT
+  burkholderia_pseudomallei              0       4 <-- HELD OUT
+  ceratocystis_fimbriata_f._sp._pl       0       4 <-- HELD OUT
+  cerrophidion_godmani                   4       0
+  cheiracanthium_punctorium              8       0
+  chromobacterium_violaceum_(strai       4       0
+  clostridioides_difficile               0       4 <-- HELD OUT
+  condylactis_gigantea                   4       0
+  conus_geographus                       4       0
+  conus_radiatus                         4       0
+  craspedocephalus_borneensis            4       0
+  cupiennius_salei                       4       0
+  dipetalogaster_maximus                 0       4 <-- HELD OUT
+  eisenia_fetida                         4       0
+  enterobacter_cloacae_subsp._cloa       4       0
+  escherichia_coli                       4       0
+  escherichia_coli_(strain_k12)          4       0
+  escherichia_coli_o127:h6_(strain       8       0
+  escherichia_coli_o157:h7_(strain       0       4 <-- HELD OUT
+  escherichia_phage_933w                 4       0
+  gloydius_blomhoffii                    4       0
+  gloydius_brevicauda                    0      12 <-- HELD OUT
+  gloydius_halys                         0      12 <-- HELD OUT
+  gloydius_shedaoensis                   4       0
+  heloderma_suspectum_cinctum            4       0
+  hemiscorpius_lepturus                  4       0
+  hoplocephalus_stephensii               4       0
+  lachesana_tarabaevi                    4       0
+  mycobacterium_tuberculosis_(stra       0       8 <-- HELD OUT
+  myrmecia_gulosa                        0       4 <-- HELD OUT
+  ornithorhynchus_anatinus               0       4 <-- HELD OUT
+  phaseolus_vulgaris                     0       4 <-- HELD OUT
+  physalaemus_nattereri                  4       0
+  plant_rip                             28       0
+  polygonatum_multiflorum                4       0
+  pomacea_canaliculata                   8       0
+  porthidium_ophryomegas                 0       4 <-- HELD OUT
+  rotavirus_a_(strain_rva/cow/unit       4       0
+  rotavirus_a_(strain_rva/sa11-bot       0       4 <-- HELD OUT
+  sambucus_nigra                         8       0
+  schizosaccharomyces_pombe_(strai       4       0
+  scorpion                               8       0
+  sicarius_terrosus                      4       0
+  snake                                416       0
+  spider                                40       0
+  streptococcus_pyogenes                 4       0
+  streptococcus_pyogenes_serotype_       4       0
+
+  NEGATIVES — top benign groups in each split:
+  Group                              Train    Test
+  ···············································
+  f6bc644c                               4       0
+  e6d52c14                               4       0
+  60ded0ea                               0       4
+  94829e1b                               4       0
+  c5fbf828                               4       0
+  353c0715                               4       0
+  c5ee2048                               4       0
+  9a4c43cd                               4       0
+  73408ffe                               4       0
+  31eea1c8                               0       4
+  cd27b27e                               4       0
+  a516887a                               0       4
+  73f15eb8                               4       0
+  1d438656                               2       0
+  2e1337cd                               2       0
+  3bf03abb                               2       0
+  5fe85cec                               0       2
+  0188aefd                               2       0
+  bcc58ed0                               2       0
+  4e5b124c                               0       2
+  ... and 808 more benign groups
+  ──────────────────────────────────────────────────────────────
+
+  AUC=0.9394  AP=0.8546
+
+[CV] Summary:
+  auc: 0.9072 +/- 0.0321  [0.9091, 0.9003, 0.9366, 0.8507, 0.9394]
+  ap: 0.8345 +/- 0.0880  [0.9449, 0.7859, 0.8947, 0.6927, 0.8546]
+  tpr@fpr=0.05: 0.6820 +/- 0.1416  [0.7837, 0.5893, 0.8036, 0.4464, 0.787]
+  tpr@fpr=0.01: 0.4114 +/- 0.2016  [0.7139, 0.3304, 0.5357, 0.1161, 0.3611]
+  tpr@fpr=0.001: 0.2527 +/- 0.1729  [0.4712, 0.1429, 0.4375, 0.0268, 0.1852]
+  [HardNeg] motif 'SAGITLGY' not found; used first 'E' at pos 32
+[HardNeg] P02879 (E->Q): 7 frags
+  [HardNeg] motif 'GADDVVDS' not found; used first 'E' at pos 47
+[HardNeg] P00588 (E->S): 3 frags
+  [HardNeg] motif 'LHELGHAV' not found; used first 'H' at pos 37
+[HardNeg] P15917 (H->A): 4 frags
+  [HardNeg] motif 'SAGITLGY' not found; used first 'E' at pos 10
+[HardNeg] P11140 (E->V): 4 frags
+[HardNeg] P10844 (H->A): 3 frags
+[HardNeg] total=5
+
+[Adversarial] n=5 flagged=5 FPR-on-mutants=100.0%
+  High FPR (>50%) = resists single-mutation evasion
+  Low  FPR (<20%) = single substitution defeats screen
+  FLAGGED  hard_neg_P02879_E->Q                                     P=0.9987
+  FLAGGED  hard_neg_P00588_E->S                                     P=0.9974
+  FLAGGED  hard_neg_P15917_H->A                                     P=0.9955
+  FLAGGED  hard_neg_P11140_E->V                                     P=0.9986
+  FLAGGED  hard_neg_P10844_H->A                                     P=0.9957
+[Calibration] MCE=0.3994 Brier=0.0883 -> Brier(Platt)=0.0766
+[Robustness] k= 2  AUC=1.0000  P(T|T)=0.7961  P(T|B)=0.0842
+[Robustness] k= 3  AUC=1.0000  P(T|T)=0.8933  P(T|B)=0.1240
+[Robustness] k= 5  AUC=0.9500  P(T|T)=0.7984  P(T|B)=0.0461
+[Robustness] k= 8  AUC=0.9500  P(T|T)=0.7539  P(T|B)=0.0826
+[Robustness] k=10  AUC=0.9500  P(T|T)=0.7968  P(T|B)=0.0443
+[Robustness] k=15  AUC=0.9000  P(T|T)=0.7489  P(T|B)=0.0443
+
+[Saved] biochain_model_v3.pt
+[Saved] biochain_results.json
+[Done]

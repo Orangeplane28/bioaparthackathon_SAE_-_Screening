@@ -46,7 +46,7 @@ TOXIN_FAMILY: Dict[str, str] = {
     # Snake toxins
     "P00625": "snake", "Q90WC0": "snake", "P01552": "snake",
     "P17529": "snake", "P15922": "snake", "P20049": "snake",
-    "P02978": "snake", "P01536": "snake",
+    "P02978": "snake", "P60775": "snake",   # P60775 = alpha-bungarotoxin (replaces obsolete P01536)
     # Scorpion toxins
     "P81054": "scorpion", "P84891": "scorpion", "Q9S419": "scorpion",
     # Spider toxins
@@ -60,9 +60,57 @@ TOXIN_FAMILY: Dict[str, str] = {
     "P02879": "plant_rip", "P11140": "plant_rip",
 }
 
+# Maps organism name substrings (lowercase) to curated family labels.
+# Used to unify bulk KW-0800 toxins with curated family group_ids so that
+# e.g. a bulk Naja naja protein gets group_id "snake" not "naja_naja",
+# preventing homolog leakage when the "snake" family is held out.
+ORGANISM_TO_FAMILY: Dict[str, str] = {
+    # Snakes (venomous — elapids, viperids, colubrids)
+    "naja":           "snake",  "bungarus":      "snake",
+    "dendroaspis":    "snake",  "ophiophagus":   "snake",
+    "crotalus":       "snake",  "bothrops":      "snake",
+    "vipera":         "snake",  "agkistrodon":   "snake",
+    "trimeresurus":   "snake",  "notechis":      "snake",
+    "oxyuranus":      "snake",  "micrurus":      "snake",
+    "lachesis":       "snake",  "daboia":        "snake",
+    "echis":          "snake",  "cerastes":      "snake",
+    "dispholidus":    "snake",  "hydrophis":     "snake",
+    "pseudonaja":     "snake",  "acanthophis":   "snake",
+    # Scorpions (buthid and non-buthid)
+    "androctonus":    "scorpion", "buthus":      "scorpion",
+    "leiurus":        "scorpion", "centruroides":"scorpion",
+    "tityus":         "scorpion", "parabuthus":  "scorpion",
+    "mesobuthus":     "scorpion", "hottentotta": "scorpion",
+    "pandinus":       "scorpion", "buthotus":    "scorpion",
+    "uroplectes":     "scorpion",
+    # Spiders
+    "latrodectus":    "spider",   "loxosceles":  "spider",
+    "atrax":          "spider",   "phoneutria":  "spider",
+    "argiope":        "spider",   "hadronyche":  "spider",
+    # Bacterial toxin producers
+    "clostridium":    "bacterial", "corynebacterium": "bacterial",
+    "vibrio":         "bacterial", "bacillus anthracis": "bacterial",
+    "staphylococcus": "bacterial", "shigella":    "bacterial",
+    "pseudomonas":    "bacterial", "bordetella":  "bacterial",
+    "listeria":       "bacterial", "yersinia":    "bacterial",
+    # Plant RIP (ribosome-inactivating proteins)
+    "ricinus":        "plant_rip", "abrus":       "plant_rip",
+    "viscum":         "plant_rip", "bryonia":     "plant_rip",
+    "momordica":      "plant_rip", "phytolacca":  "plant_rip",
+    "gelonium":       "plant_rip",
+}
+
+def _organism_to_family(org_name: str) -> Optional[str]:
+    """Return curated family label if organism is a known toxin family, else None."""
+    org_lower = org_name.lower()
+    for keyword, family in ORGANISM_TO_FAMILY.items():
+        if keyword in org_lower:
+            return family
+    return None
+
 METAZOAN_TOXIN_IDS = [
     "P00625","Q90WC0","P01552","P17529","P15922","P20049",
-    "P02978","P01536","P81054","P84891","Q9S419","P16893",
+    "P02978","P60775","P81054","P84891","Q9S419","P16893",  # P60775 replaces obsolete P01536
     "P15018","P68137",
 ]
 NON_METAZOAN_TOXIN_IDS = [
@@ -96,7 +144,7 @@ EXTRA_BENIGN_QUERIES = [
     # some snake/scorpion toxins. Using length 100-500 to get full precursor proteins
     # that are long enough to fragment (mature defensins ~30 aa are too short).
     ("lectin",   "full", "reviewed:true+AND+family:lectin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 150),
-    ("defensin", "full", "reviewed:true+AND+name:defensin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 100),
+    ("defensin", "full", "reviewed:true+AND+protein_name:defensin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 100),
 ]
 
 # ---------------------------------------------------------------------------
@@ -187,12 +235,23 @@ def download_uniprot_keyword_batch(keyword_id: str = "KW-0800",
             cache = json.load(f)
     if cache_key in cache:
         entry = cache[cache_key]
-        # Handle old cache format (plain dict of sequences)
+        # Old cache format was {acc: seq_str}. Detect and INVALIDATE so we
+        # re-fetch with the new {acc: {"seq":..., "org":...}} format.
+        # Returning {} for orgs silently caused every bulk accession to fall back
+        # to per-accession md5 group_ids, breaking organism-level CV grouping.
         if entry and isinstance(next(iter(entry.values())), str):
-            return entry, {}
-        seqs = {acc: v["seq"] for acc, v in entry.items()}
-        orgs = {acc: v["org"] for acc, v in entry.items()}
-        return seqs, orgs
+            print(f"[UniProt] old cache format for '{cache_key}' — invalidating and re-fetching with organism names...")
+            del cache[cache_key]
+            with open(cache_path, "w") as f:
+                json.dump(cache, f)
+            # fall through to fetch below
+        else:
+            seqs = {acc: v["seq"] for acc, v in entry.items()}
+            orgs = {acc: v["org"] for acc, v in entry.items()}
+            n_unknown = sum(1 for o in orgs.values() if o == "unknown")
+            if n_unknown:
+                print(f"[UniProt] cache loaded: {len(seqs)} proteins, {n_unknown} with unknown organism (md5 fallback)")
+            return seqs, orgs
     parts = [f"reviewed:true", f"keyword:{keyword_id}"]
     if taxonomy_filter:
         parts.append(taxonomy_filter)
@@ -297,8 +356,19 @@ def build_dataset_from_uniprot(random_seed: int = 42,
         if acc in TOXIN_FAMILY:
             gid = TOXIN_FAMILY[acc]
         elif acc in bulk_organisms and bulk_organisms[acc] != "unknown":
-            # Sanitise organism name -> safe group key (e.g. "Clostridium botulinum" -> "clostridium_botulinum")
-            gid = bulk_organisms[acc].lower().replace(" ", "_")[:32]
+            org_name = bulk_organisms[acc]
+            # Priority: map to curated family if organism matches a known toxin clade.
+            # e.g. "Naja naja" -> "snake", "Clostridium botulinum" -> "bacterial".
+            # This prevents bulk Naja proteins from getting group_id "naja_naja" while
+            # curated Naja proteins have group_id "snake" — which would let both sides
+            # of the same venom proteome appear in different CV folds (leakage).
+            family = _organism_to_family(org_name)
+            if family:
+                gid = family
+            else:
+                # Organism not in any curated clade — use sanitised organism name
+                # so all proteins from the same organism stay in the same fold.
+                gid = org_name.lower().replace(" ", "_")[:32]
         else:
             gid = hashlib.md5(acc.encode()).hexdigest()[:8]
         for i in range(n_augments):
@@ -319,36 +389,74 @@ def build_dataset_from_uniprot(random_seed: int = 42,
             if fs: dataset.append(fs)
 
     # Extra negatives: organism-based + biological hard negatives (lectin, defensin)
+    # Results are cached in uniprot_cache.json under key "extra_benign_{org}" so
+    # we don't re-download 850 proteins on every run.
+    extra_cache_path = cache_path  # reuse the same cache file
+    extra_cache: Dict[str, Dict[str, str]] = {}
+    if os.path.exists(extra_cache_path):
+        with open(extra_cache_path) as f:
+            raw = json.load(f)
+            # Only load sub-keys that look like extra_benign_* entries
+            extra_cache = {k: v for k, v in raw.items() if k.startswith("extra_benign_")}
+
     for org, qtype, qval, n in EXTRA_BENIGN_QUERIES:
-        if qtype == "taxonomy":
-            query = f"reviewed:true+AND+{qval}+AND+NOT+keyword:KW-0800"
-        else:  # "full" — use verbatim
-            query = qval
-        url = (f"https://rest.uniprot.org/uniprotkb/search"
-               f"?query={query}&format=json&fields=accession,sequence&size={n}")
-        try:
-            r = requests.get(url, timeout=30); r.raise_for_status()
-            extra = {e["primaryAccession"]: e["sequence"]["value"]
-                     for e in r.json().get("results",[]) if "sequence" in e}
-            print(f"[Dataset] extra benign ({org}): {len(extra)}")
-            for acc, seq in extra.items():
-                if len(seq) < 80: continue
-                gid = hashlib.md5(acc.encode()).hexdigest()[:8]
-                for i in range(2):
-                    random.seed(random_seed + i*999 + int(hashlib.md5(acc.encode()).hexdigest(), 16) % 999)
-                    fs = _make_fs(seq, 0, f"benign_{org}_{acc}_{i}", gid)
-                    if fs: dataset.append(fs)
-        except Exception as e:
-            print(f"[Dataset] extra benign ({org}) failed: {e}")
+        cache_key = f"extra_benign_{org}"
+        if cache_key in extra_cache:
+            extra = extra_cache[cache_key]
+            print(f"[Dataset] extra benign ({org}): {len(extra)} (from cache)")
+        else:
+            if qtype == "taxonomy":
+                query = f"reviewed:true+AND+{qval}+AND+NOT+keyword:KW-0800"
+            else:
+                query = qval
+            url = (f"https://rest.uniprot.org/uniprotkb/search"
+                   f"?query={query}&format=json&fields=accession,sequence&size={n}")
+            try:
+                r = requests.get(url, timeout=30); r.raise_for_status()
+                extra = {e["primaryAccession"]: e["sequence"]["value"]
+                         for e in r.json().get("results", []) if "sequence" in e}
+                print(f"[Dataset] extra benign ({org}): {len(extra)}")
+                # Write back to cache
+                with open(extra_cache_path) as f:
+                    full_cache = json.load(f)
+                full_cache[cache_key] = extra
+                with open(extra_cache_path, "w") as f:
+                    json.dump(full_cache, f)
+                extra_cache[cache_key] = extra
+            except Exception as e:
+                print(f"[Dataset] extra benign ({org}) failed: {e}")
+                extra = {}
+
+        for acc, seq in extra.items():
+            if len(seq) < 80: continue
+            gid = hashlib.md5(acc.encode()).hexdigest()[:8]
+            for i in range(2):
+                random.seed(random_seed + i*999 + int(hashlib.md5(acc.encode()).hexdigest(), 16) % 999)
+                fs = _make_fs(seq, 0, f"benign_{org}_{acc}_{i}", gid)
+                if fs: dataset.append(fs)
 
     random.shuffle(dataset)
     n_pos = sum(1 for d in dataset if d.label==1)
     print(f"[Dataset] total={len(dataset)} pos={n_pos} neg={len(dataset)-n_pos}")
 
-    # Print family distribution so we can verify family-level holdout is working
+    # ── Group quality check ───────────────────────────────────────────────────
     from collections import Counter
-    family_counts = Counter(fs.group_id for fs in dataset if fs.label == 1)
+    pos_gids = [fs.group_id for fs in dataset if fs.label == 1]
+    family_counts = Counter(pos_gids)
+    # md5 fallback group_ids are exactly 8 hex chars — flag them so we can see
+    # if organism fetching failed and leakage is still present.
+    md5_groups = {g for g in family_counts if len(g) == 8 and
+                  all(c in "0123456789abcdef" for c in g)}
+    named_groups = set(family_counts) - md5_groups
+    print(f"[Dataset] positive groups: {len(named_groups)} named  +  {len(md5_groups)} md5-fallback")
+    if md5_groups:
+        print(f"  [WARN] {len(md5_groups)} groups still using md5 fallback — organism fetch may have failed")
+        print(f"         These proteins could cause homolog leakage across folds.")
+        print(f"         Fix: delete uniprot_kw_cache.json and rerun.")
+    else:
+        print(f"  [OK] All positive group_ids are named — no md5 fallback.")
     print(f"[Dataset] positive family distribution: {dict(family_counts)}")
+    # ─────────────────────────────────────────────────────────────────────────
     return dataset
 
 def build_hard_negative_test_set(cache_path: str = "uniprot_cache.json",
@@ -506,8 +614,9 @@ class MAB(nn.Module):
         self.n1 = nn.LayerNorm(d); self.n2 = nn.LayerNorm(d)
         self.ff = nn.Sequential(nn.Linear(d,d*4), nn.GELU(), nn.Dropout(drop),
                                 nn.Linear(d*4,d), nn.Dropout(drop))
-    def forward(self, x):
-        o,_ = self.attn(x,x,x); x = self.n1(x+o); return self.n2(x+self.ff(x))
+    def forward(self, x, key_padding_mask=None):
+        o,_ = self.attn(x, x, x, key_padding_mask=key_padding_mask)
+        x = self.n1(x+o); return self.n2(x+self.ff(x))
 
 
 class ISAB(nn.Module):
@@ -521,10 +630,15 @@ class ISAB(nn.Module):
         self.az = nn.MultiheadAttention(d,h,dropout=drop,batch_first=True)
         self.nz1 = nn.LayerNorm(d); self.nz2 = nn.LayerNorm(d)
         self.fz = nn.Sequential(nn.Linear(d,d*2),nn.GELU(),nn.Linear(d*2,d))
-    def forward(self, x):
+    def forward(self, x, key_padding_mask=None):
         I = self.I.expand(x.size(0),-1,-1)
-        h,_ = self.ah(I,x,x); h = self.nh1(I+h); h = self.nh2(h+self.fh(h))
-        z,_ = self.az(x,h,h); z = self.nz1(x+z); return self.nz2(z+self.fz(z))
+        # key_padding_mask masks padding in x (the keys/values).
+        # PyTorch convention: True = ignore this position.
+        h,_ = self.ah(I, x, x, key_padding_mask=key_padding_mask)
+        h = self.nh1(I+h); h = self.nh2(h+self.fh(h))
+        # h has fixed size m (inducing points) — no padding, no mask needed here
+        z,_ = self.az(x, h, h)
+        z = self.nz1(x+z); return self.nz2(z+self.fz(z))
 
 
 class PMA(nn.Module):
@@ -536,9 +650,10 @@ class PMA(nn.Module):
         self.norm2 = nn.LayerNorm(d)
         self.ff = nn.Sequential(nn.Linear(d,d*2),nn.GELU(),nn.Linear(d*2,d))
         self.weights: Optional[torch.Tensor] = None
-    def forward(self, z):
+    def forward(self, z, key_padding_mask=None):
         S = self.S.expand(z.size(0),-1,-1)
-        o, self.weights = self.attn(S,z,z)
+        # S queries into z — mask padding in z (keys/values)
+        o, self.weights = self.attn(S, z, z, key_padding_mask=key_padding_mask)
         o = self.norm(S+o); return self.norm2(o+self.ff(o))
 
 
@@ -553,10 +668,13 @@ class SetTransformerClassifier(nn.Module):
         self.head = nn.Sequential(nn.Linear(d,d//2), nn.GELU(),
                                   nn.Dropout(drop), nn.Linear(d//2,1))
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
+        # mask: (B, N) bool — True for real fragments, False for padding.
+        # Convert to PyTorch key_padding_mask convention: True = ignore.
+        kpm = (~mask) if mask is not None else None
         z = self.proj(x)
-        for isab in self.isabs: z = isab(z)
-        p = self.pma(z); p = self.sab(p)
+        for isab in self.isabs: z = isab(z, key_padding_mask=kpm)
+        p = self.pma(z, key_padding_mask=kpm); p = self.sab(p)
         logits = self.head(p.squeeze(1)).squeeze(-1)
         return logits, torch.sigmoid(logits)
 
@@ -564,10 +682,10 @@ class SetTransformerClassifier(nn.Module):
         if self.pma.weights is None: return None
         return self.pma.weights.squeeze(1)
 
-    def explain(self, x):
+    def explain(self, x, mask=None):
         self.eval()
         with torch.no_grad():
-            logits, probs = self(x)
+            logits, probs = self(x, mask=mask)
             imp = self.fragment_importance()
         return {"probability": probs.cpu().tolist(),
                 "logits": logits.cpu().tolist(),
@@ -645,10 +763,10 @@ def train_epoch(model, loader, opt, pw):
     model.train()
     crit = nn.BCEWithLogitsLoss(pos_weight=pw.to(DEVICE))
     total, probs_all, lbl_all = 0.0, [], []
-    for emb, lbl, _ in loader:
-        emb, lbl = emb.to(DEVICE), lbl.to(DEVICE)
+    for emb, lbl, mask in loader:
+        emb, lbl, mask = emb.to(DEVICE), lbl.to(DEVICE), mask.to(DEVICE)
         opt.zero_grad()
-        logits, probs = model(emb)
+        logits, probs = model(emb, mask=mask)
         loss = crit(logits, lbl); loss.backward()
         nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
         total += loss.item()
@@ -662,8 +780,8 @@ def train_epoch(model, loader, opt, pw):
 def evaluate(model, loader) -> dict:
     model.eval()
     probs_all, lbl_all = [], []
-    for emb, lbl, _ in loader:
-        _, probs = model(emb.to(DEVICE))
+    for emb, lbl, mask in loader:
+        _, probs = model(emb.to(DEVICE), mask=mask.to(DEVICE))
         probs_all.extend(probs.cpu().tolist()); lbl_all.extend(lbl.tolist())
     probs_all = np.array(probs_all); lbl_all = np.array(lbl_all)
     if len(set(lbl_all)) < 2:
@@ -724,7 +842,9 @@ def evaluate_adversarial(model, encoder, hard_neg_sets: List[FragmentSet],
     results = []
     for fs in hard_neg_sets:
         embs = encoder.encode(fs.fragments)
-        _, prob = model(embs.unsqueeze(0).to(DEVICE))
+        x = embs.unsqueeze(0).to(DEVICE)
+        mask = torch.ones(1, x.size(1), dtype=torch.bool, device=DEVICE)
+        _, prob = model(x, mask=mask)
         p = float(prob.item())
         results.append({"source":fs.source,"probability":round(p,4),"flagged":p>=threshold})
     n = len(results)
@@ -792,7 +912,9 @@ def fragment_count_robustness(model, encoder,
                 sel = random.sample(frags, min(k,len(frags)))
                 embs = encoder.encode(sel)
                 with torch.no_grad():
-                    _, p = model(embs.unsqueeze(0).to(DEVICE))
+                    x = embs.unsqueeze(0).to(DEVICE)
+                    mask = torch.ones(1, x.size(1), dtype=torch.bool, device=DEVICE)
+                    _, p = model(x, mask=mask)
                 ps.append(float(p.item()))
             by_label[label].append(float(np.mean(ps)))
         all_p = by_label[0]+by_label[1]
@@ -819,7 +941,8 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
     labels = np.array([fs.label for fs in dataset])
     skf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     fold_metrics, final_model = [], None
-    fold_split_log = []   # records exactly what was in train/test each fold
+    fold_split_log  = []   # records exactly what was in train/test each fold
+    fold_histories  = []   # training curves per fold (for visualisation)
     for fold,(tr_idx,te_idx) in enumerate(skf.split(dataset,labels,groups)):
         print(f"\n[CV] fold {fold+1}/{n_folds}")
         tr_data = [dataset[i] for i in tr_idx]
@@ -832,28 +955,73 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
         tr_groups = set(dataset[i].group_id for i in tr_idx)
         overlap   = te_groups & tr_groups
         if overlap:
-            print(f"  [LEAKAGE WARNING] {len(overlap)} groups in both train and test: {overlap}")
+            print(f"  [LEAKAGE WARNING] {len(overlap)} groups appear in both train and test: {overlap}")
         else:
             print(f"  [OK] No group overlap between train and test")
 
-        # ── Print which toxin families/organisms are in test this fold ────────
-        te_pos_groups = sorted(set(
-            dataset[i].group_id for i in te_idx if dataset[i].label == 1
-        ))
-        tr_pos_groups = sorted(set(
-            dataset[i].group_id for i in tr_idx if dataset[i].label == 1
-        ))
-        print(f"  Test  positives (held-out families/organisms): {te_pos_groups}")
-        print(f"  Train positives (seen families/organisms):     {tr_pos_groups[:10]}{'...' if len(tr_pos_groups)>10 else ''}")
+        # ── Detailed split breakdown ──────────────────────────────────────────
+        from collections import Counter
+
+        # Count samples per (group_id, label) in train and test
+        tr_pos_counts = Counter(dataset[i].group_id for i in tr_idx if dataset[i].label == 1)
+        tr_neg_counts = Counter(dataset[i].group_id for i in tr_idx if dataset[i].label == 0)
+        te_pos_counts = Counter(dataset[i].group_id for i in te_idx if dataset[i].label == 1)
+        te_neg_counts = Counter(dataset[i].group_id for i in te_idx if dataset[i].label == 0)
+
+        tr_pos_total = sum(tr_pos_counts.values())
+        tr_neg_total = sum(tr_neg_counts.values())
+        te_pos_total = sum(te_pos_counts.values())
+        te_neg_total = sum(te_neg_counts.values())
+
+        print(f"\n  {'─'*62}")
+        print(f"  {'SPLIT SUMMARY':^62}")
+        print(f"  {'─'*62}")
+        print(f"  {'':30s}  {'TRAIN':>10}  {'TEST':>10}")
+        print(f"  {'Total samples':30s}  {len(tr_data):>10}  {len(te_data):>10}")
+        print(f"  {'Positives (toxin)':30s}  {tr_pos_total:>10}  {te_pos_total:>10}")
+        print(f"  {'Negatives (benign)':30s}  {tr_neg_total:>10}  {te_neg_total:>10}")
+        print(f"  {'─'*62}")
+
+        # Positive (toxin) families/organisms
+        print(f"\n  POSITIVES — families/organisms in each split:")
+        all_pos_groups = sorted(set(list(tr_pos_counts) + list(te_pos_counts)))
+        print(f"  {'Group':32s}  {'Train':>6}  {'Test':>6}")
+        print(f"  {'·'*47}")
+        for g in all_pos_groups:
+            tr_n = tr_pos_counts.get(g, 0)
+            te_n = te_pos_counts.get(g, 0)
+            marker = " <-- HELD OUT" if tr_n == 0 and te_n > 0 else ""
+            print(f"  {g[:32]:32s}  {tr_n:>6}  {te_n:>6}{marker}")
+
+        # Negative (benign) families/sources — show top groups by count
+        print(f"\n  NEGATIVES — top benign groups in each split:")
+        all_neg_groups = sorted(set(list(tr_neg_counts) + list(te_neg_counts)),
+                                key=lambda g: -(tr_neg_counts.get(g,0)+te_neg_counts.get(g,0)))
+        print(f"  {'Group':32s}  {'Train':>6}  {'Test':>6}")
+        print(f"  {'·'*47}")
+        for g in all_neg_groups[:20]:   # top 20 by total count
+            tr_n = tr_neg_counts.get(g, 0)
+            te_n = te_neg_counts.get(g, 0)
+            print(f"  {g[:32]:32s}  {tr_n:>6}  {te_n:>6}")
+        if len(all_neg_groups) > 20:
+            print(f"  ... and {len(all_neg_groups)-20} more benign groups")
+        print(f"  {'─'*62}\n")
+
+        te_pos_groups = sorted(te_pos_counts.keys())
+        tr_pos_groups = sorted(tr_pos_counts.keys())
 
         # Log for JSON output — proves family-level holdout to reviewers
         fold_split_log.append({
-            "fold": fold + 1,
-            "test_positive_groups":  te_pos_groups,
-            "train_positive_groups": tr_pos_groups,
+            "fold":                  fold + 1,
+            "n_train":               len(tr_data),
+            "n_test":                len(te_data),
+            "train_pos":             tr_pos_total,
+            "train_neg":             tr_neg_total,
+            "test_pos":              te_pos_total,
+            "test_neg":              te_neg_total,
+            "test_positive_groups":  {g: te_pos_counts[g] for g in te_pos_groups},
+            "train_positive_groups": {g: tr_pos_counts[g] for g in tr_pos_groups},
             "group_overlap":         sorted(overlap),
-            "n_train": len(tr_data),
-            "n_test":  len(te_data),
         })
 
         spl = GroupShuffleSplit(n_splits=1,test_size=0.15,random_state=seed+fold)
@@ -865,6 +1033,7 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
                                   lr=lr,seed=seed+fold,embedding_cache=emb_cache)
         tm = info["test_metrics"]
         fold_metrics.append({k:v for k,v in tm.items() if k not in ("probs","labels")})
+        fold_histories.append(info["history"])
         print(f"  AUC={tm['auc']:.4f}  AP={tm['ap']:.4f}")
         final_model = model
         last_te_data = te_data   # save last fold's test set for calibration (no leakage)
@@ -879,7 +1048,8 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
     return {"fold_metrics":fold_metrics,"summary":summary,
             "final_model":final_model,"emb_cache":emb_cache,
             "last_fold_test_data":last_te_data,
-            "fold_split_log":fold_split_log}
+            "fold_split_log":fold_split_log,
+            "fold_histories":fold_histories}
 
 # ---------------------------------------------------------------------------
 # 15. Single-split training pipeline
@@ -925,7 +1095,8 @@ class BioChainMLEngine:
         if not fragments: return {"error":"no fragments"}
         embs = self.encoder.encode(fragments)
         x = embs.unsqueeze(0).to(DEVICE)
-        out = self.model.explain(x)
+        mask = torch.ones(1, x.size(1), dtype=torch.bool, device=DEVICE)
+        out = self.model.explain(x, mask=mask)
         prob = out["probability"][0]
         imp  = out["fragment_importance"]
         top  = (sorted(range(len(imp[0])),key=lambda i:imp[0][i],reverse=True)[:3]
@@ -951,8 +1122,9 @@ class BioChainMLEngine:
         ps = []
         with torch.no_grad():
             x = embs.unsqueeze(0).to(DEVICE)
+            mask = torch.ones(1, x.size(1), dtype=torch.bool, device=DEVICE)
             for _ in range(n):
-                _, p = self.model(x); ps.append(p.item())
+                _, p = self.model(x, mask=mask); ps.append(p.item())
         self.model.eval()
         return float(np.std(ps))
 
@@ -968,6 +1140,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch",      type=int, default=16)
     parser.add_argument("--cache",      type=str, default="uniprot_cache.json")
     parser.add_argument("--robustness", action="store_true", help="Fragment-count sweep")
+    parser.add_argument("--audit",     action="store_true",
+                        help="Show CV fold splits (train/test groups) without training")
     args = parser.parse_args()
 
     use_esm3 = args.esm3
@@ -980,6 +1154,61 @@ if __name__ == "__main__":
     print(f"  encoder={enc_name}  cv={args.cv}  epochs={args.epochs}")
 
     dataset = build_dataset_from_uniprot(random_seed=42, cache_path=args.cache)
+
+    # ── Audit mode: print split table and exit, no training needed ────────────
+    if args.audit:
+        from collections import Counter
+        groups = np.array([fs.group_id for fs in dataset])
+        labels = np.array([fs.label    for fs in dataset])
+        skf = StratifiedGroupKFold(n_splits=5, shuffle=True, random_state=42)
+        print("\n" + "="*66)
+        print("AUDIT: CV split breakdown (no training)")
+        print("="*66)
+        for fold, (tr_idx, te_idx) in enumerate(skf.split(dataset, labels, groups)):
+            print(f"\n{'━'*66}")
+            print(f"  FOLD {fold+1}/5")
+            tr_data = [dataset[i] for i in tr_idx]
+            te_data = [dataset[i] for i in te_idx]
+            te_groups = set(dataset[i].group_id for i in te_idx)
+            tr_groups = set(dataset[i].group_id for i in tr_idx)
+            overlap   = te_groups & tr_groups
+            if overlap:
+                print(f"  [LEAKAGE WARNING] {len(overlap)} groups in both splits: {overlap}")
+            else:
+                print(f"  [OK] No group overlap")
+
+            tr_pos = Counter(dataset[i].group_id for i in tr_idx if dataset[i].label == 1)
+            tr_neg = Counter(dataset[i].group_id for i in tr_idx if dataset[i].label == 0)
+            te_pos = Counter(dataset[i].group_id for i in te_idx if dataset[i].label == 1)
+            te_neg = Counter(dataset[i].group_id for i in te_idx if dataset[i].label == 0)
+
+            print(f"\n  {'':30s}  {'TRAIN':>8}  {'TEST':>8}")
+            print(f"  {'Total':30s}  {len(tr_data):>8}  {len(te_data):>8}")
+            print(f"  {'Positives (toxin)':30s}  {sum(tr_pos.values()):>8}  {sum(te_pos.values()):>8}")
+            print(f"  {'Negatives (benign)':30s}  {sum(tr_neg.values()):>8}  {sum(te_neg.values()):>8}")
+
+            all_pos = sorted(set(list(tr_pos)+list(te_pos)))
+            print(f"\n  Toxin families/organisms:")
+            print(f"  {'Group':32s}  {'Train':>6}  {'Test':>6}")
+            print(f"  {'·'*47}")
+            for g in all_pos:
+                marker = "  <-- held out" if tr_pos.get(g,0)==0 else ""
+                print(f"  {g[:32]:32s}  {tr_pos.get(g,0):>6}  {te_pos.get(g,0):>6}{marker}")
+
+            all_neg = sorted(set(list(tr_neg)+list(te_neg)),
+                             key=lambda g: -(tr_neg.get(g,0)+te_neg.get(g,0)))
+            print(f"\n  Benign groups (top 15):")
+            print(f"  {'Group':32s}  {'Train':>6}  {'Test':>6}")
+            print(f"  {'·'*47}")
+            for g in all_neg[:15]:
+                print(f"  {g[:32]:32s}  {tr_neg.get(g,0):>6}  {te_neg.get(g,0):>6}")
+            if len(all_neg) > 15:
+                print(f"  ... and {len(all_neg)-15} more benign groups")
+        print("\n" + "="*66)
+        print("[Audit done] No training was run.")
+        import sys; sys.exit(0)
+    # ──────────────────────────────────────────────────────────────────────────
+
     encoder, embed_dim = make_encoder(use_esm3, use_esm2)
 
     if args.cv:
@@ -1024,11 +1253,12 @@ if __name__ == "__main__":
         rob_results = fragment_count_robustness(model, encoder, tp)
 
     # ── Save checkpoint ────────────────────────────────────────────────────────
-    cv_summary    = cv["summary"]        if args.cv else {}
-    fold_metrics  = cv["fold_metrics"]   if args.cv else []
-    fold_split_log= cv["fold_split_log"] if args.cv else []
-    history = (fold_metrics[0].get("history", {}) if fold_metrics
-               else run_info.get("history", {}))
+    cv_summary     = cv["summary"]         if args.cv else {}
+    fold_metrics   = cv["fold_metrics"]    if args.cv else []
+    fold_split_log = cv["fold_split_log"]  if args.cv else []
+    fold_histories = cv["fold_histories"]  if args.cv else []
+    # CV mode: list of per-fold history dicts; single-split: the one history dict
+    history = fold_histories if args.cv else run_info.get("history", {})
 
     torch.save({
         "model_state":  model.state_dict(),
@@ -1043,7 +1273,7 @@ if __name__ == "__main__":
             "adversarial":   adv_results,
             "calibration":   {k:v for k,v in cal_results.items() if k != "reliability"},
             "robustness":    rob_results,
-            "history":       history,
+            "history":       history,        # list of dicts in CV mode, dict in single-split
         }
     }, "biochain_model_v3.pt")
     print("\n[Saved] biochain_model_v3.pt")

@@ -33,6 +33,8 @@ DEVICE = torch.device(
     "cuda" if torch.cuda.is_available() else
     "mps"  if torch.backends.mps.is_available() else "cpu"
 )
+if DEVICE.type == "cuda":
+    torch.backends.cudnn.benchmark = True   # auto-tune kernels for fixed input sizes
 print(f"[BioChain v3] device={DEVICE}")
 
 # ---------------------------------------------------------------------------
@@ -88,9 +90,15 @@ EXTRA_BENIGN_QUERIES = [
     ("arabidopsis", "taxonomy", "taxonomy_id:3702", 200),
     ("fly",         "taxonomy", "taxonomy_id:7227", 200),
     ("worm",        "taxonomy", "taxonomy_id:6239", 200),
+    # Biological hard negatives — same fold families as toxins but non-toxic.
+    # Lectin: carbohydrate-binding proteins, similar beta-barrel folds to some toxins.
+    # Defensin precursors: antimicrobial peptides, similar disulfide-rich scaffold to
+    # some snake/scorpion toxins. Using length 100-500 to get full precursor proteins
+    # that are long enough to fragment (mature defensins ~30 aa are too short).
     ("lectin",   "full", "reviewed:true+AND+family:lectin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 150),
     ("defensin", "full", "reviewed:true+AND+name:defensin+AND+length:%5B100+TO+500%5D+AND+NOT+keyword:KW-0800", 100),
 ]
+
 # ---------------------------------------------------------------------------
 # 2. Hard-negative mutations (FIX #2)
 # ---------------------------------------------------------------------------
@@ -811,12 +819,43 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
     labels = np.array([fs.label for fs in dataset])
     skf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
     fold_metrics, final_model = [], None
+    fold_split_log = []   # records exactly what was in train/test each fold
     for fold,(tr_idx,te_idx) in enumerate(skf.split(dataset,labels,groups)):
         print(f"\n[CV] fold {fold+1}/{n_folds}")
         tr_data = [dataset[i] for i in tr_idx]
         te_data = [dataset[i] for i in te_idx]
         tr_grp  = [dataset[i].group_id for i in tr_idx]
         tr_lbl  = [dataset[i].label for i in tr_idx]
+
+        # ── Leakage check: train and test groups must be disjoint ─────────────
+        te_groups = set(dataset[i].group_id for i in te_idx)
+        tr_groups = set(dataset[i].group_id for i in tr_idx)
+        overlap   = te_groups & tr_groups
+        if overlap:
+            print(f"  [LEAKAGE WARNING] {len(overlap)} groups in both train and test: {overlap}")
+        else:
+            print(f"  [OK] No group overlap between train and test")
+
+        # ── Print which toxin families/organisms are in test this fold ────────
+        te_pos_groups = sorted(set(
+            dataset[i].group_id for i in te_idx if dataset[i].label == 1
+        ))
+        tr_pos_groups = sorted(set(
+            dataset[i].group_id for i in tr_idx if dataset[i].label == 1
+        ))
+        print(f"  Test  positives (held-out families/organisms): {te_pos_groups}")
+        print(f"  Train positives (seen families/organisms):     {tr_pos_groups[:10]}{'...' if len(tr_pos_groups)>10 else ''}")
+
+        # Log for JSON output — proves family-level holdout to reviewers
+        fold_split_log.append({
+            "fold": fold + 1,
+            "test_positive_groups":  te_pos_groups,
+            "train_positive_groups": tr_pos_groups,
+            "group_overlap":         sorted(overlap),
+            "n_train": len(tr_data),
+            "n_test":  len(te_data),
+        })
+
         spl = GroupShuffleSplit(n_splits=1,test_size=0.15,random_state=seed+fold)
         ti2,vi2 = next(spl.split(tr_data,tr_lbl,tr_grp))
         va_data = [tr_data[i] for i in vi2]
@@ -839,7 +878,8 @@ def cross_validate(dataset, encoder, embed_dim, n_folds=5, n_epochs=40,
         print(f"  {k}: {v['mean']:.4f} +/- {v['std']:.4f}  {v['per_fold']}")
     return {"fold_metrics":fold_metrics,"summary":summary,
             "final_model":final_model,"emb_cache":emb_cache,
-            "last_fold_test_data":last_te_data}
+            "last_fold_test_data":last_te_data,
+            "fold_split_log":fold_split_log}
 
 # ---------------------------------------------------------------------------
 # 15. Single-split training pipeline
@@ -984,8 +1024,9 @@ if __name__ == "__main__":
         rob_results = fragment_count_robustness(model, encoder, tp)
 
     # ── Save checkpoint ────────────────────────────────────────────────────────
-    cv_summary = cv["summary"] if args.cv else {}
-    fold_metrics = cv["fold_metrics"] if args.cv else []
+    cv_summary    = cv["summary"]        if args.cv else {}
+    fold_metrics  = cv["fold_metrics"]   if args.cv else []
+    fold_split_log= cv["fold_split_log"] if args.cv else []
     history = (fold_metrics[0].get("history", {}) if fold_metrics
                else run_info.get("history", {}))
 
@@ -995,28 +1036,30 @@ if __name__ == "__main__":
         "encoder_name": enc_name,
         "architecture": {"input_dim":embed_dim,"d":128,"h":4,"m":8,"n_isab":2},
         "run_info": {
-            "cv_summary":   cv_summary,
-            "fold_metrics": [{k:v for k,v in fm.items()
-                              if k not in ("probs","labels")} for fm in fold_metrics],
-            "adversarial":  adv_results,
-            "calibration":  {k:v for k,v in cal_results.items() if k != "reliability"},
-            "robustness":   rob_results,
-            "history":      history,
+            "cv_summary":    cv_summary,
+            "fold_metrics":  [{k:v for k,v in fm.items()
+                               if k not in ("probs","labels")} for fm in fold_metrics],
+            "fold_split_log": fold_split_log,
+            "adversarial":   adv_results,
+            "calibration":   {k:v for k,v in cal_results.items() if k != "reliability"},
+            "robustness":    rob_results,
+            "history":       history,
         }
     }, "biochain_model_v3.pt")
     print("\n[Saved] biochain_model_v3.pt")
 
     # ── Save results JSON (for biochain_visualize.py and reporting) ────────────
     results_json = {
-        "encoder":      enc_name,
-        "embed_dim":    embed_dim,
-        "cv_summary":   cv_summary,
-        "fold_metrics": [{k:v for k,v in fm.items()
-                          if k not in ("probs","labels")} for fm in fold_metrics],
-        "adversarial":  adv_results,
-        "calibration":  {k:v for k,v in cal_results.items() if k != "reliability"},
-        "robustness":   rob_results,
-        "history":      history,
+        "encoder":       enc_name,
+        "embed_dim":     embed_dim,
+        "cv_summary":    cv_summary,
+        "fold_metrics":  [{k:v for k,v in fm.items()
+                           if k not in ("probs","labels")} for fm in fold_metrics],
+        "fold_split_log": fold_split_log,
+        "adversarial":   adv_results,
+        "calibration":   {k:v for k,v in cal_results.items() if k != "reliability"},
+        "robustness":    rob_results,
+        "history":       history,
     }
     with open("biochain_results.json", "w") as f:
         json.dump(results_json, f, indent=2, default=str)
